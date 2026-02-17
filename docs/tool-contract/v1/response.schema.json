@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arangodb.com/schema-analyzer/tool-contract/v1/response.schema.json",
+  "title": "ArangoDB Schema Analyzer Tool Response (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "operation", "ok"],
+  "properties": {
+    "contractVersion": { "const": "1" },
+    "requestId": { "type": "string" },
+    "operation": { "type": "string", "enum": ["analyze", "snapshot", "export", "docs", "owl"] },
+    "ok": { "type": "boolean" },
+
+    "tooling": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "libraryVersion": { "type": "string" },
+        "contractVersion": { "type": "string" },
+        "snapshotFingerprint": { "type": "string" },
+        "snapshotVersion": { "type": "integer" },
+        "usedBaseline": { "type": "boolean" },
+        "repairAttempts": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "result": {
+      "description": "Operation-specific payload.",
+      "oneOf": [
+        { "$ref": "#/$defs/AnalyzeResult" },
+        { "$ref": "#/$defs/SnapshotResult" },
+        { "$ref": "#/$defs/ExportResult" },
+        { "$ref": "#/$defs/DocsResult" },
+        { "$ref": "#/$defs/OwlResult" }
+      ]
+    },
+
+    "error": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+
+  "$defs": {
+    "AnalysisOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conceptualSchema", "physicalMapping", "metadata"],
+      "properties": {
+        "conceptualSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entities", "relationships", "properties"],
+          "properties": {
+            "entities": { "type": "array", "items": { "type": "object" } },
+            "relationships": { "type": "array", "items": { "type": "object" } },
+            "properties": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "physicalMapping": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entities", "relationships"],
+          "properties": {
+            "entities": { "type": "object", "additionalProperties": { "type": "object" } },
+            "relationships": { "type": "object", "additionalProperties": { "type": "object" } }
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["confidence", "timestamp", "analyzedCollectionCounts", "detectedPatterns"],
+          "properties": {
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "timestamp": { "type": "string" },
+            "analyzedCollectionCounts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["documentCollections", "edgeCollections"],
+              "properties": {
+                "documentCollections": { "type": "number", "minimum": 0 },
+                "edgeCollections": { "type": "number", "minimum": 0 }
+              }
+            },
+            "detectedPatterns": { "type": "array", "items": { "type": "string" } },
+            "warnings": { "type": "array", "items": { "type": "string" } },
+            "assumptions": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+
+    "AnalyzeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["analysis"],
+      "properties": {
+        "analysis": { "$ref": "#/$defs/AnalysisOutput" },
+        "snapshot": { "type": "object", "additionalProperties": true }
+      }
+    },
+
+    "SnapshotResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshot"],
+      "properties": {
+        "snapshot": { "type": "object", "additionalProperties": true }
+      }
+    },
+
+    "ExportResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["export"],
+      "properties": {
+        "export": { "$ref": "#/$defs/AnalysisOutput" }
+      }
+    },
+
+    "DocsResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["markdown"],
+      "properties": {
+        "markdown": { "type": "string" }
+      }
+    },
+
+    "OwlResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turtle"],
+      "properties": {
+        "turtle": { "type": "string" }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "ok": { "const": true } } },
+      "then": { "required": ["result"] },
+      "else": { "required": ["error"] }
+    }
+  ]
+}
+

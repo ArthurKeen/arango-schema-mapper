@@ -49,6 +49,22 @@ analysis = analyzer.analyze_physical_schema(
 print(analysis.metadata.confidence)
 ```
 
+## Tool usage (CLI)
+
+This project can be called as a **non-interactive tool** (stdin JSON → stdout JSON) using the v1 contract under `docs/tool-contract/v1/`.
+
+Install (editable):
+
+```bash
+python -m pip install -e .
+```
+
+Example (analyze) using the provided request example:
+
+```bash
+cat docs/tool-contract/v1/examples/request.analyze.json | arangodb-schema-analyzer --pretty
+```
+
 ## Public API
 
 Exports:

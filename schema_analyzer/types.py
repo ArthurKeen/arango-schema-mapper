@@ -19,6 +19,12 @@ class AnalysisMetadata(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     review_required: bool = False
+    # Optional tool/agent observability fields (v0.1+). These are safe because metadata
+    # is allowed to have additional properties by the JSON Schema validator.
+    provider: str | None = None
+    model: str | None = None
+    repair_attempts: int = 0
+    used_baseline: bool = False
 
 
 class AnalysisResult(BaseModel):

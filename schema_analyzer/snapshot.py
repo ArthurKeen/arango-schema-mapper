@@ -52,6 +52,10 @@ def _iter_scalar_values(v: Any):
 
 def _omit_samples(snapshot: dict[str, Any]) -> dict[str, Any]:
     clone = {**snapshot}
+    # generated_at is intentionally excluded from fingerprints/caching because it is time-varying
+    # and does not represent the underlying physical schema.
+    if "generated_at" in clone:
+        clone["generated_at"] = None
     cols = []
     for c in clone.get("collections", []) or []:
         if not isinstance(c, dict):
@@ -65,7 +69,12 @@ def _omit_samples(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def fingerprint_physical_schema(snapshot: dict[str, Any], *, include_samples: bool = False) -> str:
-    data = snapshot if include_samples else _omit_samples(snapshot)
+    # Even when including samples, normalize away generated_at to keep fingerprints stable.
+    data = dict(snapshot) if isinstance(snapshot, dict) else {"raw": snapshot}
+    if "generated_at" in data:
+        data["generated_at"] = None
+    if not include_samples:
+        data = _omit_samples(data)
     return sha256_hex(stable_dumps(data))
 
 def _normalize_index(idx: Any) -> dict[str, Any]:

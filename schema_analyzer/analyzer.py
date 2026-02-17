@@ -8,6 +8,7 @@ import os
 
 from .cache import AnalysisCache, cache_from_config
 from .conceptual import ConceptualSchema
+from .baseline import infer_baseline_from_snapshot
 from .errors import SchemaAnalyzerError
 from .mapping import PhysicalMapping
 from .snapshot import fingerprint_physical_schema, snapshot_physical_schema
@@ -15,6 +16,7 @@ from .types import AnalysisMetadata, AnalysisResult, now_iso
 from .utils import extract_first_json_object
 from .utils import stable_dumps
 from .validation import validate_analysis_output
+from .workflow import run_generate_validate_repair
 
 
 def _default_system_prompt() -> str:
@@ -152,16 +154,25 @@ class AgenticSchemaAnalyzer:
         if not self.llm_provider or not api_key:
             doc_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "document")
             edge_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "edge")
+            baseline = infer_baseline_from_snapshot(snapshot)
             meta = AnalysisMetadata(
-                confidence=0.0,
+                confidence=0.1,
                 timestamp=now_iso(),
                 analyzed_collection_counts={"documentCollections": doc_count, "edgeCollections": edge_count},
                 detected_patterns=[],
-                warnings=["LLM provider not configured; returning empty conceptual schema and mapping"],
+                warnings=["LLM provider not configured; returning deterministic baseline inference"],
                 assumptions=[],
                 review_required=True,
+                provider=str(self.llm_provider) if self.llm_provider else None,
+                model=None,
+                repair_attempts=0,
+                used_baseline=True,
             )
-            result = AnalysisResult(conceptual_schema=ConceptualSchema.empty().to_json(), physical_mapping=PhysicalMapping.empty().to_json(), metadata=meta)
+            result = AnalysisResult(
+                conceptual_schema=ConceptualSchema.from_json(baseline.get("conceptualSchema", {})).to_json(),
+                physical_mapping=PhysicalMapping.from_json(baseline.get("physicalMapping", {})).to_json(),
+                metadata=meta,
+            )
             if use_cache and self.cache is not None:
                 self.cache.set(fingerprint, result.model_dump(), ttl_seconds=self.cache_ttl_seconds)
             return result
@@ -182,25 +193,30 @@ class AgenticSchemaAnalyzer:
 
         system = _default_system_prompt()
         prompt = _build_prompt(snapshot)
-        resp = provider.generate(model=model, system=system, prompt=prompt, timeout_ms=remaining)
-
+        errors: list[str] = []
+        warnings: list[str] = []
         try:
-            json_str = extract_first_json_object(resp.text)
-        except Exception as e:
-            raise SchemaAnalyzerError("Failed to extract JSON from LLM output", code="PARSE_ERROR", cause=e)
-
-        import json
-
-        try:
-            data = json.loads(json_str)
-        except Exception as e:
-            raise SchemaAnalyzerError("LLM output was not valid JSON", code="PARSE_ERROR", cause=e)
-
-        errors = validate_analysis_output(data)
-        warnings = []
-        if errors:
-            # Keep a usable payload but mark low confidence + review required.
-            warnings.append("LLM output failed schema validation; falling back to minimal structure")
+            wf = run_generate_validate_repair(
+                provider=provider,
+                model=model,
+                system=system,
+                prompt=prompt,
+                timeout_ms=remaining,
+                max_repair_attempts=2,
+            )
+            data = wf.data
+            repair_attempts = wf.repair_attempts
+        except SchemaAnalyzerError as e:
+            # Hard failure: fall back to baseline inference but preserve diagnostics in warnings.
+            baseline = infer_baseline_from_snapshot(snapshot)
+            data = {
+                "conceptualSchema": baseline.get("conceptualSchema", {}),
+                "physicalMapping": baseline.get("physicalMapping", {}),
+                "metadata": {"warnings": [str(e)]},
+            }
+            warnings.append("LLM workflow failed; returning deterministic baseline inference")
+            errors.append(str(e))
+            repair_attempts = 0
 
         doc_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "document")
         edge_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "edge")
@@ -225,6 +241,10 @@ class AgenticSchemaAnalyzer:
             warnings=list(data.get("metadata", {}).get("warnings") or []) + warnings + errors,
             assumptions=list(data.get("metadata", {}).get("assumptions") or []),
             review_required=review_required,
+            provider=str(self.llm_provider).lower() if self.llm_provider else None,
+            model=model,
+            repair_attempts=int(repair_attempts),
+            used_baseline=bool(errors),
         )
 
         conceptual_schema = ConceptualSchema.from_json(data.get("conceptualSchema", {}) if isinstance(data.get("conceptualSchema"), dict) else {}).to_json()

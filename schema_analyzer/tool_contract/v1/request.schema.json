@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arangodb.com/schema-analyzer/tool-contract/v1/request.schema.json",
+  "title": "ArangoDB Schema Analyzer Tool Request (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "operation"],
+  "properties": {
+    "contractVersion": { "const": "1" },
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "type": "string", "enum": ["analyze", "snapshot", "export", "docs", "owl"] },
+
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "database"],
+      "properties": {
+        "url": { "type": "string", "minLength": 1, "description": "ArangoDB URL, e.g. http://localhost:8529" },
+        "database": { "type": "string", "minLength": 1 },
+        "username": { "type": "string" },
+
+        "password": { "type": "string", "description": "Prefer passwordEnvVar in agent workflows." },
+        "passwordEnvVar": { "type": "string", "minLength": 1 },
+
+        "verifyTls": { "type": "boolean", "default": true }
+      },
+      "allOf": [
+        {
+          "not": {
+            "allOf": [
+              { "required": ["password"] },
+              { "required": ["passwordEnvVar"] }
+            ]
+          }
+        }
+      ]
+    },
+
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "enum": ["openai", "anthropic", "openrouter"] },
+        "model": { "type": "string" },
+
+        "apiKey": { "type": "string", "description": "Prefer apiKeyEnvVar in agent workflows." },
+        "apiKeyEnvVar": { "type": "string", "minLength": 1 },
+
+        "systemPrompt": { "type": "string", "description": "Optional override; default is strict JSON-only." },
+        "promptVersion": { "type": "string", "description": "Optional for cache keying/traceability." }
+      },
+      "allOf": [
+        {
+          "not": {
+            "allOf": [
+              { "required": ["apiKey"] },
+              { "required": ["apiKeyEnvVar"] }
+            ]
+          }
+        }
+      ]
+    },
+
+    "analysisOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeoutMs": { "type": "integer", "minimum": 1000, "default": 60000 },
+        "sampleLimitPerCollection": { "type": "integer", "minimum": 0, "default": 0 },
+        "includeSamplesInSnapshot": { "type": "boolean", "default": false },
+
+        "useCache": { "type": "boolean", "default": true },
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "enum": ["filesystem"] },
+            "directory": { "type": "string", "minLength": 1 }
+          }
+        },
+        "cacheTtlSeconds": { "type": "integer", "minimum": 0, "default": 86400 },
+
+        "reviewThreshold": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.6 },
+        "maxRepairAttempts": { "type": "integer", "minimum": 0, "default": 2 }
+      }
+    },
+
+    "outputOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pretty": { "type": "boolean", "default": true },
+        "includeSnapshot": { "type": "boolean", "default": false },
+        "includeSnapshotFingerprint": { "type": "boolean", "default": true },
+        "exportTarget": { "type": "string", "enum": ["cypher"], "default": "cypher" }
+      }
+    },
+
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Used for operations that transform existing analysis/snapshot payloads.",
+      "properties": {
+        "analysis": { "$ref": "#/$defs/AnalysisOutput" },
+        "snapshot": { "$ref": "#/$defs/PhysicalSnapshot" }
+      }
+    }
+  },
+
+  "$defs": {
+    "PhysicalSnapshot": {
+      "type": "object",
+      "description": "Physical schema snapshot as produced by snapshot_physical_schema().",
+      "additionalProperties": true
+    },
+
+    "AnalysisOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conceptualSchema", "physicalMapping", "metadata"],
+      "properties": {
+        "conceptualSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entities", "relationships", "properties"],
+          "properties": {
+            "entities": { "type": "array", "items": { "type": "object" } },
+            "relationships": { "type": "array", "items": { "type": "object" } },
+            "properties": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "physicalMapping": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entities", "relationships"],
+          "properties": {
+            "entities": { "type": "object", "additionalProperties": { "type": "object" } },
+            "relationships": { "type": "object", "additionalProperties": { "type": "object" } }
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["confidence", "timestamp", "analyzedCollectionCounts", "detectedPatterns"],
+          "properties": {
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "timestamp": { "type": "string" },
+            "analyzedCollectionCounts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["documentCollections", "edgeCollections"],
+              "properties": {
+                "documentCollections": { "type": "number", "minimum": 0 },
+                "edgeCollections": { "type": "number", "minimum": 0 }
+              }
+            },
+            "detectedPatterns": { "type": "array", "items": { "type": "string" } },
+            "warnings": { "type": "array", "items": { "type": "string" } },
+            "assumptions": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "operation": { "const": "analyze" } } },
+      "then": { "required": ["connection"] }
+    },
+    {
+      "if": { "properties": { "operation": { "const": "snapshot" } } },
+      "then": { "required": ["connection"] }
+    },
+    {
+      "if": { "properties": { "operation": { "enum": ["export", "docs", "owl"] } } },
+      "then": {
+        "required": ["input"],
+        "properties": {
+          "input": { "required": ["analysis"] }
+        }
+      }
+    }
+  ]
+}
+
