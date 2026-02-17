@@ -1,0 +1,20 @@
+{
+  "domain": "intelligence",
+  "description": "Intelligence/OSINT knowledge graph: people, organizations, locations, events, documents, sources.",
+  "entities": [
+    { "name": "Person", "properties": ["personId", "name", "dob", "nationality"] },
+    { "name": "Organization", "properties": ["orgId", "name", "type", "country"] },
+    { "name": "Location", "properties": ["locationId", "name", "geo"] },
+    { "name": "Event", "properties": ["eventId", "eventType", "startTime", "endTime"] },
+    { "name": "Document", "properties": ["docId", "title", "publishedAt", "source"] },
+    { "name": "Source", "properties": ["sourceId", "sourceType", "credibility"] }
+  ],
+  "relationships": [
+    { "type": "MEMBER_OF", "from": "Person", "to": "Organization", "properties": ["since", "role"] },
+    { "type": "LOCATED_IN", "from": "Organization", "to": "Location", "properties": ["since"] },
+    { "type": "OCCURRED_AT", "from": "Event", "to": "Location", "properties": ["confidence"] },
+    { "type": "MENTIONED_IN", "from": "Person", "to": "Document", "properties": ["confidence", "snippet"] },
+    { "type": "SOURCED_FROM", "from": "Document", "to": "Source", "properties": ["retrievedAt"] }
+  ]
+}
+

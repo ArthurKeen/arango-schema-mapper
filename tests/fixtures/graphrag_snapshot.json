@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "generated_at": null,
+  "collections": [
+    {
+      "name": "chunks",
+      "type": "document",
+      "count": 120000,
+      "properties": { "type": 2 },
+      "indexes": [
+        { "type": "persistent", "fields": ["documentId"], "unique": false, "sparse": false, "name": "chunks_documentId" },
+        { "type": "primary", "fields": ["_key"], "unique": true, "sparse": false, "name": "primary" }
+      ],
+      "candidate_type_field_counts": { "type": 1 },
+      "candidate_type_fields": ["type"],
+      "sample_field_value_counts": { "type": [{ "value": "chunk", "count": 1 }] },
+      "inferred_entity_type": "Chunk"
+    },
+    {
+      "name": "documents",
+      "type": "document",
+      "count": 10000,
+      "properties": { "type": 2 },
+      "indexes": [
+        { "type": "persistent", "fields": ["source"], "unique": false, "sparse": false, "name": "documents_source" },
+        { "type": "primary", "fields": ["_key"], "unique": true, "sparse": false, "name": "primary" }
+      ],
+      "candidate_type_field_counts": {},
+      "candidate_type_fields": [],
+      "sample_field_value_counts": {},
+      "inferred_entity_type": "Document"
+    },
+    {
+      "name": "entities",
+      "type": "document",
+      "count": 500000,
+      "properties": { "type": 2 },
+      "indexes": [
+        { "type": "persistent", "fields": ["name"], "unique": false, "sparse": false, "name": "entities_name" },
+        { "type": "persistent", "fields": ["type"], "unique": false, "sparse": false, "name": "entities_type" },
+        { "type": "primary", "fields": ["_key"], "unique": true, "sparse": false, "name": "primary" }
+      ],
+      "candidate_type_field_counts": { "kind": 1, "labels": 1, "type": 1 },
+      "candidate_type_fields": ["kind", "labels", "type"],
+      "sample_field_value_counts": {
+        "kind": [{ "value": "person", "count": 1 }],
+        "labels": [{ "value": "Entity", "count": 1 }],
+        "type": [{ "value": "Person", "count": 1 }]
+      },
+      "inferred_entity_type": "Entity"
+    },
+    {
+      "name": "mentions",
+      "type": "edge",
+      "count": 3000000,
+      "properties": { "type": 3 },
+      "indexes": [
+        { "type": "primary", "fields": ["_key"], "unique": true, "sparse": false, "name": "primary" }
+      ],
+      "candidate_type_field_counts": { "relType": 1, "relation": 1 },
+      "candidate_type_fields": ["relType", "relation"],
+      "sample_field_value_counts": {
+        "relType": [{ "value": "MENTIONS", "count": 1 }],
+        "relation": [{ "value": "mentions", "count": 1 }]
+      },
+      "inferred_relationship_type": "MENTIONS"
+    }
+  ],
+  "graphs": [
+    { "name": "graphrag" }
+  ],
+  "graphs_detailed": [
+    {
+      "name": "graphrag",
+      "edge_definitions": [
+        { "collection": "mentions", "from": ["chunks"], "to": ["entities"] }
+      ],
+      "orphan_collections": ["documents"]
+    }
+  ]
+}
+

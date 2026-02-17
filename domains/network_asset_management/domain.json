@@ -1,0 +1,21 @@
+{
+  "domain": "network_asset_management",
+  "description": "Network/asset management: devices, assets, interfaces, IPs, locations, tickets.",
+  "entities": [
+    { "name": "Asset", "properties": ["assetId", "assetType", "owner", "status"] },
+    { "name": "Device", "properties": ["deviceId", "vendor", "model", "osVersion"] },
+    { "name": "Interface", "properties": ["interfaceId", "name", "mac", "speed"] },
+    { "name": "IPAddress", "properties": ["ip", "version", "prefix"] },
+    { "name": "Location", "properties": ["locationId", "site", "room", "rack"] },
+    { "name": "Ticket", "properties": ["ticketId", "severity", "status", "openedAt"] }
+  ],
+  "relationships": [
+    { "type": "HAS_DEVICE", "from": "Asset", "to": "Device", "properties": ["since"] },
+    { "type": "HAS_INTERFACE", "from": "Device", "to": "Interface", "properties": ["slot"] },
+    { "type": "ASSIGNED_IP", "from": "Interface", "to": "IPAddress", "properties": ["dhcp"] },
+    { "type": "LOCATED_IN", "from": "Device", "to": "Location", "properties": ["since"] },
+    { "type": "CONNECTED_TO", "from": "Interface", "to": "Interface", "properties": ["linkType", "speed"] },
+    { "type": "HAS_TICKET", "from": "Asset", "to": "Ticket", "properties": ["openedBy"] }
+  ]
+}
+

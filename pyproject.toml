@@ -1,0 +1,38 @@
+[project]
+name = "arangodb-schema-analyzer"
+version = "0.1.0"
+description = "Agentic schema analyzer for ArangoDB: conceptual model + conceptual-to-physical mapping for transpilers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = []
+dependencies = [
+  "python-arango>=8.1.1",
+  "pydantic>=2.6.0",
+  "jsonschema>=4.21.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+anthropic = ["anthropic>=0.25.0"]
+dev = [
+  "pytest>=8.0.0"
+]
+
+[project.urls]
+Homepage = ""
+Repository = ""
+
+[build-system]
+requires = ["hatchling>=1.21.0"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: requires a running ArangoDB (typically via docker compose)"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["schema_analyzer"]
+

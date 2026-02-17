@@ -1,0 +1,21 @@
+{
+  "domain": "insurance",
+  "description": "Insurance domain: policyholders, policies, coverages, claims, adjusters, payments.",
+  "entities": [
+    { "name": "Policyholder", "properties": ["policyholderId", "name", "dob", "address"] },
+    { "name": "Policy", "properties": ["policyId", "product", "effectiveDate", "expirationDate", "status"] },
+    { "name": "Coverage", "properties": ["coverageCode", "limit", "deductible"] },
+    { "name": "Claim", "properties": ["claimId", "lossDate", "status", "amount"] },
+    { "name": "Adjuster", "properties": ["adjusterId", "name", "region"] },
+    { "name": "Payment", "properties": ["paymentId", "amount", "timestamp", "method"] }
+  ],
+  "relationships": [
+    { "type": "HOLDS_POLICY", "from": "Policyholder", "to": "Policy", "properties": ["since"] },
+    { "type": "HAS_COVERAGE", "from": "Policy", "to": "Coverage", "properties": ["included"] },
+    { "type": "FILED_CLAIM", "from": "Policyholder", "to": "Claim", "properties": ["channel"] },
+    { "type": "CLAIM_ON_POLICY", "from": "Claim", "to": "Policy", "properties": ["policySnapshotId"] },
+    { "type": "ASSIGNED_TO", "from": "Claim", "to": "Adjuster", "properties": ["assignedAt"] },
+    { "type": "PAID_BY", "from": "Claim", "to": "Payment", "properties": ["payee"] }
+  ]
+}
+

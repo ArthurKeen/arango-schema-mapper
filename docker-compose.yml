@@ -1,0 +1,13 @@
+services:
+  arangodb:
+    image: arangodb:3.12
+    environment:
+      - ARANGO_ROOT_PASSWORD=openSesame
+    ports:
+      - "18529:8529"
+    volumes:
+      - arango_data:/var/lib/arangodb3
+
+volumes:
+  arango_data:
+

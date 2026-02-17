@@ -1,0 +1,22 @@
+{
+  "domain": "financial_fraud_detection",
+  "description": "Fraud detection graph over accounts, transactions, devices, merchants, alerts and cases.",
+  "entities": [
+    { "name": "Account", "properties": ["accountId", "tenantId", "status", "openedAt"] },
+    { "name": "Customer", "properties": ["customerId", "name", "kycTier", "country"] },
+    { "name": "Transaction", "properties": ["txId", "amount", "currency", "timestamp", "channel"] },
+    { "name": "Device", "properties": ["deviceId", "deviceType", "fingerprint"] },
+    { "name": "Merchant", "properties": ["merchantId", "mcc", "name", "country"] },
+    { "name": "Alert", "properties": ["alertId", "ruleId", "score", "createdAt"] },
+    { "name": "Case", "properties": ["caseId", "priority", "status", "openedAt"] }
+  ],
+  "relationships": [
+    { "type": "OWNS", "from": "Customer", "to": "Account", "properties": ["since"] },
+    { "type": "MADE", "from": "Account", "to": "Transaction", "properties": ["authMethod"] },
+    { "type": "USING_DEVICE", "from": "Transaction", "to": "Device", "properties": ["ip", "geo"] },
+    { "type": "AT_MERCHANT", "from": "Transaction", "to": "Merchant", "properties": ["posEntryMode"] },
+    { "type": "TRIGGERED", "from": "Transaction", "to": "Alert", "properties": ["ruleVersion"] },
+    { "type": "IN_CASE", "from": "Alert", "to": "Case", "properties": ["linkedAt"] }
+  ]
+}
+

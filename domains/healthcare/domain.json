@@ -1,0 +1,20 @@
+{
+  "domain": "healthcare",
+  "description": "Clinical + administrative healthcare operations (patients, encounters, diagnoses, medications, claims).",
+  "entities": [
+    { "name": "Patient", "properties": ["patientId", "name", "dob", "sex"] },
+    { "name": "Provider", "properties": ["providerId", "name", "specialty"] },
+    { "name": "Encounter", "properties": ["encounterId", "startTime", "endTime", "facility"] },
+    { "name": "Diagnosis", "properties": ["code", "system", "display"] },
+    { "name": "Medication", "properties": ["rxNorm", "name", "dose"] },
+    { "name": "Claim", "properties": ["claimId", "payer", "status", "amount"] }
+  ],
+  "relationships": [
+    { "type": "HAS_ENCOUNTER", "from": "Patient", "to": "Encounter", "properties": ["role"] },
+    { "type": "SEEN_BY", "from": "Encounter", "to": "Provider", "properties": ["role"] },
+    { "type": "HAS_DIAGNOSIS", "from": "Encounter", "to": "Diagnosis", "properties": ["primary"] },
+    { "type": "PRESCRIBED", "from": "Encounter", "to": "Medication", "properties": ["route", "frequency"] },
+    { "type": "GENERATED_CLAIM", "from": "Encounter", "to": "Claim", "properties": ["billingCode"] }
+  ]
+}
+
