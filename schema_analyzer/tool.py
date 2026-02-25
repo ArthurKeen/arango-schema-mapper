@@ -87,6 +87,7 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
 
     op: Operation = request["operation"]
     req_id = request.get("requestId")
+    req_id = req_id if isinstance(req_id, str) and req_id else None
 
     try:
         if op in ("snapshot", "analyze"):
@@ -105,11 +106,12 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
             resp = {
                 "contractVersion": CONTRACT_VERSION,
                 "operation": op,
-                "requestId": req_id,
                 "ok": True,
                 "tooling": _tooling_block(analysis=None, snapshot=snapshot),
                 "result": {"snapshot": snapshot},
             }
+            if req_id:
+                resp["requestId"] = req_id
             v = validate_response_v1(resp)
             if v:
                 raise SchemaAnalyzerError(f"Internal response validation failed: {v}", code="INTERNAL_ERROR")
@@ -146,7 +148,7 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
             analysis_dict = {
                 "conceptualSchema": analysis.conceptual_schema,
                 "physicalMapping": analysis.physical_mapping,
-                "metadata": analysis.metadata.model_dump(),
+                "metadata": analysis.metadata.model_dump(by_alias=True),
             }
 
             result: dict[str, Any] = {"analysis": analysis_dict}
@@ -156,11 +158,12 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
             resp = {
                 "contractVersion": CONTRACT_VERSION,
                 "operation": op,
-                "requestId": req_id,
                 "ok": True,
                 "tooling": _tooling_block(analysis=analysis_dict, snapshot=snapshot),
                 "result": result,
             }
+            if req_id:
+                resp["requestId"] = req_id
             v = validate_response_v1(resp)
             if v:
                 raise SchemaAnalyzerError(f"Internal response validation failed: {v}", code="INTERNAL_ERROR")
@@ -178,11 +181,12 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
             resp = {
                 "contractVersion": CONTRACT_VERSION,
                 "operation": op,
-                "requestId": req_id,
                 "ok": True,
                 "tooling": _tooling_block(analysis=analysis_in, snapshot=None),
                 "result": {"export": out},
             }
+            if req_id:
+                resp["requestId"] = req_id
             v = validate_response_v1(resp)
             if v:
                 raise SchemaAnalyzerError(f"Internal response validation failed: {v}", code="INTERNAL_ERROR")
@@ -193,11 +197,12 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
             resp = {
                 "contractVersion": CONTRACT_VERSION,
                 "operation": op,
-                "requestId": req_id,
                 "ok": True,
                 "tooling": _tooling_block(analysis=analysis_in, snapshot=None),
                 "result": {"markdown": md},
             }
+            if req_id:
+                resp["requestId"] = req_id
             v = validate_response_v1(resp)
             if v:
                 raise SchemaAnalyzerError(f"Internal response validation failed: {v}", code="INTERNAL_ERROR")
@@ -208,11 +213,12 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
             resp = {
                 "contractVersion": CONTRACT_VERSION,
                 "operation": op,
-                "requestId": req_id,
                 "ok": True,
                 "tooling": _tooling_block(analysis=analysis_in, snapshot=None),
                 "result": {"turtle": ttl},
             }
+            if req_id:
+                resp["requestId"] = req_id
             v = validate_response_v1(resp)
             if v:
                 raise SchemaAnalyzerError(f"Internal response validation failed: {v}", code="INTERNAL_ERROR")
@@ -224,10 +230,11 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
         resp = {
             "contractVersion": CONTRACT_VERSION,
             "operation": op,
-            "requestId": req_id,
             "ok": False,
             "error": {"code": e.code or "ERROR", "message": str(e)},
         }
+        if req_id:
+            resp["requestId"] = req_id
         # best-effort: validate, but don't override the original error
         return resp
 
