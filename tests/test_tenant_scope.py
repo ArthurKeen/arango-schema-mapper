@@ -491,6 +491,138 @@ def test_returns_none_when_payload_is_missing_required_blocks() -> None:
     assert annotate_tenant_scope({"conceptualSchema": {}, "physicalMapping": {"entities": {}}}) is None
 
 
+def test_null_tenant_scope_report_validates_against_v1_contract() -> None:
+    """Single-tenant graphs end up with ``tenantScopeReport: null``
+    after Pydantic dumps the metadata block. The v1 response schema
+    must accept the null and the populated-object case symmetrically,
+    and reject malformed objects.
+
+    Regression for the bug discovered in CI on PR #14: emitting a
+    strict ``"type": "object"`` definition for ``tenantScopeReport``
+    caused the bundled validator to reject every analyze response
+    that didn't carry a Tenant collection (including the integration
+    smoke test). The fix is the ``oneOf: [null, object]`` shape now
+    used in ``tool_contract/v1/response.schema.json``.
+    """
+    from schema_analyzer.tool_contract_v1 import validate_response_v1
+
+    base_response = {
+        "contractVersion": "1",
+        "operation": "analyze",
+        "ok": True,
+        "result": {
+            "analysis": {
+                "conceptualSchema": {
+                    "entities": [],
+                    "relationships": [],
+                    "properties": [],
+                },
+                "physicalMapping": {"entities": {}, "relationships": {}},
+                "metadata": {
+                    "confidence": 0.5,
+                    "timestamp": "2026-04-21T00:00:00Z",
+                    "analyzedCollectionCounts": {
+                        "documentCollections": 0,
+                        "edgeCollections": 0,
+                    },
+                    "detectedPatterns": [],
+                    "tenantScopeReport": None,
+                },
+            }
+        },
+    }
+    assert validate_response_v1(base_response) == []
+
+    base_response["result"]["analysis"]["metadata"]["tenantScopeReport"] = {
+        "tenantEntity": "Tenant",
+        "denormScopedCount": 1,
+        "traversalScopedCount": 0,
+        "globalCount": 0,
+        "tenantFieldRegex": "^tenant[_-]?(id|key)$",
+        "discovery": {
+            "fromExplicitAnnotation": 0,
+            "fromDenormFieldHeuristic": 1,
+            "fromTraversalReachability": 0,
+        },
+    }
+    assert validate_response_v1(base_response) == []
+
+    # Malformed report (object missing required tenantEntity) must be
+    # rejected — the schema should not silently accept anything.
+    base_response["result"]["analysis"]["metadata"]["tenantScopeReport"] = {
+        "denormScopedCount": 1,
+    }
+    assert validate_response_v1(base_response) != []
+
+
+def test_per_entity_tenant_scope_blocks_validate_against_v1_contract() -> None:
+    """All three role values + the optional ``tenantField`` /
+    ``tenantEntity`` shapes must validate when emitted under
+    ``physicalMapping.entities[*].tenantScope``."""
+    from schema_analyzer.tool_contract_v1 import validate_response_v1
+
+    response = {
+        "contractVersion": "1",
+        "operation": "analyze",
+        "ok": True,
+        "result": {
+            "analysis": {
+                "conceptualSchema": {
+                    "entities": [],
+                    "relationships": [],
+                    "properties": [],
+                },
+                "physicalMapping": {
+                    "entities": {
+                        "Tenant": {
+                            "style": "COLLECTION",
+                            "collectionName": "Tenant",
+                            "tenantScope": {"role": "tenant_root"},
+                        },
+                        "Device": {
+                            "style": "COLLECTION",
+                            "collectionName": "Device",
+                            "tenantScope": {
+                                "role": "tenant_scoped",
+                                "tenantEntity": "Tenant",
+                                "tenantField": "TENANT_ID",
+                            },
+                        },
+                        "TraversalOnly": {
+                            "style": "COLLECTION",
+                            "collectionName": "TraversalOnly",
+                            "tenantScope": {
+                                "role": "tenant_scoped",
+                                "tenantEntity": "Tenant",
+                            },
+                        },
+                        "Cve": {
+                            "style": "COLLECTION",
+                            "collectionName": "Cve",
+                            "tenantScope": {"role": "global"},
+                        },
+                    },
+                    "relationships": {},
+                },
+                "metadata": {
+                    "confidence": 0.9,
+                    "timestamp": "2026-04-21T00:00:00Z",
+                    "analyzedCollectionCounts": {
+                        "documentCollections": 4,
+                        "edgeCollections": 0,
+                    },
+                    "detectedPatterns": [],
+                },
+            }
+        },
+    }
+    assert validate_response_v1(response) == []
+
+    # Bogus role string must be rejected.
+    response["result"]["analysis"]["physicalMapping"]["entities"]["Cve"]["tenantScope"] = {"role": "shared"}
+    assert validate_response_v1(response) != []
+
+
 def test_skips_entities_with_no_physical_mapping_entry() -> None:
     """If reconciliation hasn't backfilled an entity yet, the annotator
     skips it rather than crashing."""

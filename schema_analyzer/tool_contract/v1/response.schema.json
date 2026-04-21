@@ -204,26 +204,31 @@
             "warnings": { "type": "array", "items": { "type": "string" } },
             "assumptions": { "type": "array", "items": { "type": "string" } },
             "tenantScopeReport": {
-              "type": "object",
-              "description": "Summary of per-entity tenant-scope classification applied to physicalMapping.entities[*].tenantScope. Absent when no tenant-root entity was detected.",
-              "additionalProperties": true,
-              "required": ["tenantEntity"],
-              "properties": {
-                "tenantEntity": { "type": "string", "minLength": 1 },
-                "denormScopedCount": { "type": "integer", "minimum": 0 },
-                "traversalScopedCount": { "type": "integer", "minimum": 0 },
-                "globalCount": { "type": "integer", "minimum": 0 },
-                "tenantFieldRegex": { "type": "string" },
-                "discovery": {
+              "description": "Summary of per-entity tenant-scope classification applied to physicalMapping.entities[*].tenantScope. Null (or absent) when no tenant-root entity was detected — single-tenant graphs leave it null. Mirrors the null-default convention used by sibling diagnostic blocks (reconciliation, statistics).",
+              "oneOf": [
+                { "type": "null" },
+                {
                   "type": "object",
                   "additionalProperties": true,
+                  "required": ["tenantEntity"],
                   "properties": {
-                    "fromExplicitAnnotation": { "type": "integer", "minimum": 0 },
-                    "fromDenormFieldHeuristic": { "type": "integer", "minimum": 0 },
-                    "fromTraversalReachability": { "type": "integer", "minimum": 0 }
+                    "tenantEntity": { "type": "string", "minLength": 1 },
+                    "denormScopedCount": { "type": "integer", "minimum": 0 },
+                    "traversalScopedCount": { "type": "integer", "minimum": 0 },
+                    "globalCount": { "type": "integer", "minimum": 0 },
+                    "tenantFieldRegex": { "type": "string" },
+                    "discovery": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "properties": {
+                        "fromExplicitAnnotation": { "type": "integer", "minimum": 0 },
+                        "fromDenormFieldHeuristic": { "type": "integer", "minimum": 0 },
+                        "fromTraversalReachability": { "type": "integer", "minimum": 0 }
+                      }
+                    }
                   }
                 }
-              }
+              ]
             }
           }
         }
