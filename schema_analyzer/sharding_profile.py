@@ -332,14 +332,13 @@ def classify_sharding_profile(
 
     graphs_raw = snapshot.get("graphs_detailed")
     graphs: list[dict[str, Any]] = (
-        [g for g in graphs_raw if isinstance(g, dict) and not g.get("error")]
-        if isinstance(graphs_raw, list)
-        else []
+        [g for g in graphs_raw if isinstance(g, dict) and not g.get("error")] if isinstance(graphs_raw, list) else []
     )
 
     graph_by_collection = _graph_membership_index(graphs)
     collections = _build_collections_block(
-        snapshot, graph_by_collection=graph_by_collection,
+        snapshot,
+        graph_by_collection=graph_by_collection,
     )
 
     degraded_reasons: list[str] = []
@@ -361,14 +360,9 @@ def classify_sharding_profile(
         collections=collections,
     )
 
-    graph_evidence = [
-        ev for ev in (_graph_evidence(g) for g in graphs) if ev is not None
-    ]
+    graph_evidence = [ev for ev in (_graph_evidence(g) for g in graphs) if ev is not None]
 
-    satellite_collections = sorted(
-        name for name, block in collections.items()
-        if block.get("kind") == "satellite"
-    )
+    satellite_collections = sorted(name for name, block in collections.items() if block.get("kind") == "satellite")
 
     collection_kind_counts = {
         "smartgraph": sum(1 for b in collections.values() if b.get("kind") == "smartgraph"),
@@ -393,8 +387,7 @@ def classify_sharding_profile(
             block["oneShardLeader"] = leader
 
     logger.info(
-        "Sharding profile: style=%s graphs=%d smart=%d disjoint=%d "
-        "satellites=%d regular=%d status=%s",
+        "Sharding profile: style=%s graphs=%d smart=%d disjoint=%d satellites=%d regular=%d status=%s",
         style,
         len(graph_evidence),
         sum(1 for g in graph_evidence if g.get("isSmart")),
