@@ -594,7 +594,85 @@ it does not host a query parser/translator. See
   **and literal** triple patterns. SPARQL→AQL *query translation itself* remains
   out of scope for this library (lives in the consuming transpiler).
 - SQL mapping for relational query translation — future; would add a `sql`
-  export target (relational view) on the same adapter principle.
+  export target (relational view) on the same adapter principle. See §6.4.1 for
+  the planned design.
+
+**6.4.1. SQL / relational-view export (planned)**
+
+**Purpose.** Emit a relational projection of the conceptual + physical model so a
+SQL-oriented consumer (BI tooling, or a **SQL→AQL** transpiler) can resolve
+relational query patterns against the graph. Adapter only — like the `cypher` /
+`sparql` targets it produces a *mapping contract*, not executed queries.
+
+**Mapping rules.**
+
+- **Entity (COLLECTION style)** → one base table/view named after the collection;
+  primary key `_key`; columns are the entity's literal/datatype properties.
+- **Entity (LABEL style — multiple labels sharing a collection)** → one view per
+  label, filtered by the type discriminator (`typeField == value`); columns are
+  that label's observed fields. The discriminator filter is carried in the
+  physical resolution so the projection is reproducible.
+- **Literal properties** → columns with an inferred SQL type (JSON/AQL scalar →
+  SQL type; heterogeneous / unknown → `TEXT` or `JSON`).
+- **Relationship (edge collection)** →
+  - default **many-to-many** → a junction table with `from_key` / `to_key`
+    foreign keys plus columns for any edge properties;
+  - a **1:N** shape is emitted as an optional FK column on the child table *only*
+    when backed by a uniqueness signal (unique index on an endpoint); otherwise
+    the junction table is used. FKs are never assumed without evidence.
+- **Endpoints** are resolved with the existing edge-endpoint entity-type
+  resolution; FK targets reference the resolved entity tables.
+- Every emitted object carries an `arangoResolution` block (collection, style,
+  discriminator/filter, AQL snippet) mirroring the other exports, so downstream
+  translation stays deterministic.
+
+**Output shape (illustrative).**
+
+```json
+{
+  "tables": [
+    {
+      "name": "users",
+      "entity": "User",
+      "primaryKey": "_key",
+      "columns": [{ "name": "email", "sqlType": "TEXT", "conceptualProperty": "email", "nullable": true }],
+      "arangoResolution": { "collectionName": "users", "style": "COLLECTION" }
+    }
+  ],
+  "foreignKeys": [
+    { "table": "orders", "columns": ["user_key"], "referencesTable": "users", "referencesColumns": ["_key"], "viaEdgeCollection": "placed_by" }
+  ],
+  "junctionTables": [
+    {
+      "name": "follows",
+      "relationship": "FOLLOWS",
+      "fromColumn": "from_key",
+      "toColumn": "to_key",
+      "properties": [{ "name": "since", "sqlType": "TIMESTAMP" }],
+      "arangoResolution": { "collectionName": "follows", "style": "COLLECTION" }
+    }
+  ]
+}
+```
+
+**Contract surface.**
+
+- `export_mapping(analysis, target="sql")` returns the structure above.
+- Tool contract: add `"sql"` to the export `format` enum and a `SqlExportResult`
+  definition in `response.schema.json`.
+- CLI: `export --target sql`.
+
+**Open decisions (resolve before implementing).**
+
+- Table/view naming when several labels share a collection (prefix with the
+  collection name to avoid collisions?).
+- Type-inference source (observed fields vs. sampled values) and the default for
+  heterogeneous fields.
+- Whether to also emit DDL (`CREATE TABLE …`) text alongside the structured JSON.
+- FK-inference threshold (which uniqueness signals justify a FK vs. a junction).
+
+**Effort / gating.** Moderate, self-contained, no new runtime dependencies.
+Deliberately **gated on a concrete SQL consumer** — not built speculatively.
 
 #### **6.5. Advanced Features**
 - **Schema evolution and lineage** — See §3.13 (run records, fingerprint linkage, diff between analyses, stale detection). Optional alignment with AOE temporal imports when analyses are promoted into `ontology_generator`.
@@ -611,6 +689,26 @@ it does not host a query parser/translator. See
   (`schema_analyzer.incremental`, `AgenticSchemaAnalyzer.analyze_incremental`).
 - Custom provider SDK support beyond OpenAI/Anthropic/OpenRouter
 - ~~**MCP packaging** — Standalone MCP server or module as in §3.11~~ _Shipped in 0.4.0_ as the `arangodb-schema-analyzer-mcp` stdio server (`[mcp]` extra; see §3.11).
+
+#### **6.6. Non-goals (decided out of scope)**
+
+Deliberate boundary decisions, recorded here so they are **not mistaken for
+pending roadmap work**. Revisit only via an explicit scope change.
+
+- **Query generation / translation (SPARQL→AQL, Cypher→AQL, SQL→AQL).** Decided
+  in §6.4: this library is an **adapter, not a query engine**. It emits stable
+  mapping contracts (the `cypher` / `sparql` exports and the resolution index)
+  that the consuming transpilers (`arango-cypher-py`, `arango-sparql-py`) use to
+  generate AQL. A query parser/translator will not live here. (Note: this is
+  distinct from the planned **`sql` mapping export** in §6.4.1, which is a
+  contract, not a translator.)
+- **Full temporal graph / edge-interval time-travel (§3.13.4).** The library
+  provides **run-level and fingerprint-level** provenance (run IDs, ISO
+  timestamps, snapshot/shape/counts fingerprints, `diff_analyses`, element
+  `source` tags) and stops there. Fine-grained bitemporal history
+  (`created`/`expired` on every element, "as-of" reconstruction) is owned by
+  AOE's temporal layer when analyses are promoted into `ontology_generator`;
+  duplicating it here is out of scope.
 
 ---
 
