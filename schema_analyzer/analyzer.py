@@ -56,7 +56,12 @@ from .mapping import PhysicalMapping
 from .provenance import annotate_provenance
 from .providers import create_provider, get_default_model, get_provider_env_var
 from .quality import build_quality_block
-from .redaction import RedactionOptions, redact_snapshot_for_egress
+from .redaction import (
+    RedactionOptions,
+    build_field_name_map,
+    redact_snapshot_for_egress,
+    unmask_field_names,
+)
 from .snapshot import (
     fingerprint_physical_counts,
     fingerprint_physical_schema,
@@ -209,6 +214,9 @@ class _AnalysisContext(NamedTuple):
     prompt: str
     max_repair_attempts: int
     domain_hint: DomainHint | None = None
+    # real-name→token map when field-name masking is active; used to un-mask the
+    # LLM response so the result carries real field names (PRD §4.3).
+    field_name_map: dict[str, str] | None = None
 
 
 @dataclass
@@ -421,7 +429,14 @@ class AgenticSchemaAnalyzer:
         elapsed_ms = int((time.time() - started) * 1000)
         remaining = max(MIN_LLM_BUDGET_MS, timeout_ms - elapsed_ms)
 
-        prompt = _build_prompt(redact_snapshot_for_egress(snapshot, self.redaction), domain_hint=domain_hint)
+        field_name_map: dict[str, str] | None = None
+        if self.redaction is not None and self.redaction.mask_field_names:
+            cols = snapshot.get("collections")
+            field_name_map = build_field_name_map(cols) if isinstance(cols, list) else {}
+        prompt = _build_prompt(
+            redact_snapshot_for_egress(snapshot, self.redaction, field_name_map=field_name_map),
+            domain_hint=domain_hint,
+        )
 
         return _AnalysisContext(
             snapshot=snapshot,
@@ -434,6 +449,7 @@ class AgenticSchemaAnalyzer:
             prompt=prompt,
             max_repair_attempts=self._repair_limit(),
             domain_hint=domain_hint,
+            field_name_map=field_name_map,
         )
 
     def analyze_physical_schema(
@@ -474,6 +490,8 @@ class AgenticSchemaAnalyzer:
             )
             data = wf.data
             repair_attempts = wf.repair_attempts
+            if prep.field_name_map:
+                data = unmask_field_names(data, prep.field_name_map)
             _apply_collection_name_allowlist(data, prep.snapshot, warnings)
             _apply_reconciliation(data, prep.snapshot, warnings)
         except SchemaAnalyzerError as e:
@@ -608,6 +626,8 @@ class AgenticSchemaAnalyzer:
             )
             data = wf.data
             repair_attempts = wf.repair_attempts
+            if prep.field_name_map:
+                data = unmask_field_names(data, prep.field_name_map)
             _apply_collection_name_allowlist(data, prep.snapshot, warnings)
             _apply_reconciliation(data, prep.snapshot, warnings)
         except SchemaAnalyzerError as e:

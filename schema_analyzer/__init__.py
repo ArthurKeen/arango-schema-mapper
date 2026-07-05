@@ -22,6 +22,7 @@ from .metric_history import (
 from .owl_export import export_conceptual_model_as_jsonld, export_conceptual_model_as_owl_turtle
 from .providers import list_providers, register_provider
 from .quality import compute_gold_comparison
+from .redaction import RedactionOptions, build_field_name_map, unmask_field_names
 from .snapshot import (
     fingerprint_physical_counts,
     fingerprint_physical_schema,
@@ -39,6 +40,9 @@ __all__ = [
     "diff_analyses",
     "assess_change_state",
     "refresh_statistics",
+    "RedactionOptions",
+    "build_field_name_map",
+    "unmask_field_names",
     "to_csi",
     "from_csi",
     "CSI_VERSION",

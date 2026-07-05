@@ -13,7 +13,7 @@ inference, reconciliation, and statistics is always the unredacted original, so
 output quality and grounding are unaffected by what was withheld from the
 vendor.
 
-Two independent, composable modes are supported:
+Three independent, composable modes are supported:
 
 * ``strip_samples`` — drop ``sample_documents`` / ``sample_edges`` entirely.
 * ``mask_field_values`` — replace concrete *data values* (type-discriminator
@@ -24,31 +24,49 @@ Two independent, composable modes are supported:
   ``edge_endpoints.entity_types_by_relation`` (relation keys + resolved
   endpoint entity-type lists). Type values resolved purely from collection names
   (Property-Graph endpoints) are left intact because they are not field data.
-
-Field *name* masking (with output round-tripping) remains future work; it is
-intentionally excluded here because masking names without faithfully restoring
-them in the LLM output would corrupt the physical mapping.
+* ``mask_field_names`` — replace document *field names* with opaque, name-like
+  ``redacted_field_N`` tokens before egress, then **round-trip** them back to the
+  real names in the LLM output. A single snapshot-wide name→token map masks
+  every field-name occurrence (``candidate_type_fields``,
+  ``sample_field_value_counts`` keys, ``observed_fields.fields`` /
+  ``by_type`` value lists, ``indexes[*].fields``, and sample-document keys),
+  excluding ArangoDB system fields (``_key`` / ``_from`` / ``_to`` / …). The
+  caller (:class:`AgenticSchemaAnalyzer`) applies the map to the prompt snapshot
+  and then calls :func:`unmask_field_names` on the model's response so the
+  conceptual schema and physical mapping carry the real names again. Because the
+  token pattern ``redacted_field_<int>`` is un-masked by exact regex match, it is
+  robust to the tokens appearing standalone (property names) or embedded in prose
+  (descriptions).
 """
 
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass
 from typing import Any
 
 REDACTED_VALUE_TOKEN = "<redacted>"
+FIELD_NAME_TOKEN_PREFIX = "redacted_field_"
 
 _SAMPLE_KEYS = ("sample_documents", "sample_edges")
+
+# ArangoDB system / structural fields that are not sensitive user data and must
+# stay intact so the LLM (and downstream reconciliation) can reason about edges.
+_SYSTEM_FIELD_NAMES = frozenset({"_key", "_id", "_rev", "_from", "_to"})
+
+_FIELD_TOKEN_RE = re.compile(re.escape(FIELD_NAME_TOKEN_PREFIX) + r"\d+")
 
 
 @dataclass(frozen=True)
 class RedactionOptions:
     strip_samples: bool = False
     mask_field_values: bool = False
+    mask_field_names: bool = False
 
     @property
     def active(self) -> bool:
-        return self.strip_samples or self.mask_field_values
+        return self.strip_samples or self.mask_field_values or self.mask_field_names
 
     @classmethod
     def from_dict(cls, data: Any) -> RedactionOptions:
@@ -57,6 +75,7 @@ class RedactionOptions:
         return cls(
             strip_samples=bool(data.get("stripSamples", False)),
             mask_field_values=bool(data.get("maskFieldValues", False)),
+            mask_field_names=bool(data.get("maskFieldNames", False)),
         )
 
 
@@ -125,7 +144,128 @@ def _mask_edge_endpoints(endpoints: dict[str, Any], token_map: dict[str, str]) -
     endpoints["entity_types_by_relation"] = new_by_rel
 
 
-def redact_snapshot_for_egress(snapshot: dict[str, Any], options: RedactionOptions | None) -> dict[str, Any]:
+def build_field_name_map(collections: list[Any]) -> dict[str, str]:
+    """Build a deterministic real-name→token map for every document field name.
+
+    Gathers names from every field-bearing location in the snapshot
+    (``candidate_type_fields``, ``sample_field_value_counts`` keys,
+    ``observed_fields.fields`` / ``by_type`` value lists, ``indexes[*].fields``,
+    and sample-document keys), excluding ArangoDB system fields. Sorting before
+    token assignment keeps the mapping stable across runs.
+    """
+    names: set[str] = set()
+
+    def _add(name: Any) -> None:
+        if isinstance(name, str) and name and name not in _SYSTEM_FIELD_NAMES:
+            names.add(name)
+
+    for entry in collections:
+        if not isinstance(entry, dict):
+            continue
+        for f in entry.get("candidate_type_fields") or []:
+            _add(f)
+        svc = entry.get("sample_field_value_counts")
+        if isinstance(svc, dict):
+            for k in svc:
+                _add(k)
+        observed = entry.get("observed_fields")
+        if isinstance(observed, dict):
+            for f in observed.get("fields") or []:
+                _add(f)
+            by_type = observed.get("by_type")
+            if isinstance(by_type, dict):
+                for field_list in by_type.values():
+                    if isinstance(field_list, list):
+                        for f in field_list:
+                            _add(f)
+        indexes = entry.get("indexes")
+        if isinstance(indexes, list):
+            for idx in indexes:
+                if isinstance(idx, dict) and isinstance(idx.get("fields"), list):
+                    for f in idx["fields"]:
+                        _add(f)
+        for sk in _SAMPLE_KEYS:
+            docs = entry.get(sk)
+            if isinstance(docs, list):
+                for doc in docs:
+                    if isinstance(doc, dict):
+                        for k in doc:
+                            _add(k)
+
+    return {name: f"{FIELD_NAME_TOKEN_PREFIX}{i}" for i, name in enumerate(sorted(names))}
+
+
+def _mask_name(name: Any, name_map: dict[str, str]) -> Any:
+    return name_map.get(name, name) if isinstance(name, str) else name
+
+
+def _mask_field_names_in_entry(entry: dict[str, Any], name_map: dict[str, str]) -> None:
+    ctf = entry.get("candidate_type_fields")
+    if isinstance(ctf, list):
+        entry["candidate_type_fields"] = [_mask_name(f, name_map) for f in ctf]
+
+    svc = entry.get("sample_field_value_counts")
+    if isinstance(svc, dict):
+        entry["sample_field_value_counts"] = {_mask_name(k, name_map): v for k, v in svc.items()}
+
+    observed = entry.get("observed_fields")
+    if isinstance(observed, dict):
+        fields = observed.get("fields")
+        if isinstance(fields, list):
+            observed["fields"] = [_mask_name(f, name_map) for f in fields]
+        by_type = observed.get("by_type")
+        if isinstance(by_type, dict):
+            observed["by_type"] = {
+                k: ([_mask_name(f, name_map) for f in v] if isinstance(v, list) else v) for k, v in by_type.items()
+            }
+
+    indexes = entry.get("indexes")
+    if isinstance(indexes, list):
+        for idx in indexes:
+            if isinstance(idx, dict) and isinstance(idx.get("fields"), list):
+                idx["fields"] = [_mask_name(f, name_map) for f in idx["fields"]]
+
+    for sk in _SAMPLE_KEYS:
+        docs = entry.get(sk)
+        if isinstance(docs, list):
+            entry[sk] = [
+                {_mask_name(k, name_map): v for k, v in doc.items()} if isinstance(doc, dict) else doc for doc in docs
+            ]
+
+
+def unmask_field_names(obj: Any, name_map: dict[str, str]) -> Any:
+    """Round-trip: replace ``redacted_field_N`` tokens back to real field names.
+
+    Deep-walks ``obj`` (dict keys + values, lists, strings) and substitutes each
+    token via exact regex match, so tokens are restored whether they appear as a
+    standalone property name or embedded in a description string. Unknown tokens
+    are left as-is. Returns a new structure; ``obj`` is not mutated.
+    """
+    inverse = {token: real for real, token in name_map.items()}
+    if not inverse:
+        return obj
+
+    def _sub(s: str) -> str:
+        return _FIELD_TOKEN_RE.sub(lambda m: inverse.get(m.group(0), m.group(0)), s)
+
+    def _walk(o: Any) -> Any:
+        if isinstance(o, dict):
+            return {(_sub(k) if isinstance(k, str) else k): _walk(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [_walk(v) for v in o]
+        if isinstance(o, str):
+            return _sub(o)
+        return o
+
+    return _walk(obj)
+
+
+def redact_snapshot_for_egress(
+    snapshot: dict[str, Any],
+    options: RedactionOptions | None,
+    *,
+    field_name_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Return a redacted deep copy of ``snapshot`` for LLM egress.
 
     When ``options`` is ``None`` or inactive, returns the snapshot unchanged
@@ -140,6 +280,9 @@ def redact_snapshot_for_egress(snapshot: dict[str, Any], options: RedactionOptio
         return redacted
 
     token_map = _collect_sensitive_values(collections) if options.mask_field_values else {}
+    name_map: dict[str, str] = {}
+    if options.mask_field_names:
+        name_map = field_name_map if field_name_map is not None else build_field_name_map(collections)
 
     for entry in collections:
         if not isinstance(entry, dict):
@@ -157,4 +300,6 @@ def redact_snapshot_for_egress(snapshot: dict[str, Any], options: RedactionOptio
             endpoints = entry.get("edge_endpoints")
             if isinstance(endpoints, dict):
                 _mask_edge_endpoints(endpoints, token_map)
+        if options.mask_field_names and name_map:
+            _mask_field_names_in_entry(entry, name_map)
     return redacted

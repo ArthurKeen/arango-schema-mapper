@@ -134,6 +134,11 @@
               "type": "boolean",
               "default": false,
               "description": "Replace concrete values in sample_field_value_counts with opaque tokens, preserving field names, distinct-value counts, and frequencies."
+            },
+            "maskFieldNames": {
+              "type": "boolean",
+              "default": false,
+              "description": "Replace document field names with opaque 'redacted_field_N' tokens before egress, then round-trip them back to the real names in the LLM output (conceptual schema + physical mapping are unaffected). System fields (_key/_from/_to/…) are preserved."
             }
           }
         },

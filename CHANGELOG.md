@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Advanced redaction: field-name masking with round-tripping (PRD §4.3)
+
+- **`maskFieldNames` redaction mode.** Third composable LLM-egress redaction
+  mode (alongside `stripSamples` / `maskFieldValues`). Replaces document *field
+  names* with opaque, name-like `redacted_field_N` tokens before the snapshot is
+  sent to the provider — across `candidate_type_fields`,
+  `sample_field_value_counts` keys, `observed_fields.fields` / `by_type` value
+  lists, `indexes[*].fields`, and sample-document keys — while preserving
+  ArangoDB system fields (`_key` / `_from` / `_to` / …) and collection names.
+- **Output round-tripping.** `AgenticSchemaAnalyzer` builds a snapshot-wide
+  name→token map, applies it to the prompt snapshot, then un-masks the model's
+  response (`redaction.unmask_field_names`) so the conceptual schema and physical
+  mapping carry the **real** field names. Un-masking is an exact regex match on
+  `redacted_field_<int>`, robust to tokens appearing standalone (property names)
+  or embedded in prose (descriptions); unknown tokens are left intact. New
+  `build_field_name_map` / `unmask_field_names` helpers; `RedactionOptions`
+  gains `mask_field_names`. Exposed via `analysisOptions.redaction.maskFieldNames`.
+
 ### Caller-supplied domain context (PRD §4.7)
 
 - **`domainContext` request field / `AgenticSchemaAnalyzer(domain_context=...)`.**

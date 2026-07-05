@@ -190,6 +190,10 @@ Exports (see `schema_analyzer/__init__.py`):
   on shape change, stats-only refresh on count change, reuse when unchanged
 - `AgenticSchemaAnalyzer(domain_context=...)` / `domainContext` request field —
   supply explicit business-domain priors that override auto-detection
+- `RedactionOptions(strip_samples/mask_field_values/mask_field_names)` /
+  `analysisOptions.redaction` — scrub the snapshot before LLM egress;
+  `maskFieldNames` tokenizes field names and round-trips them back to real names
+  in the output (`build_field_name_map` / `unmask_field_names`)
 
 ## Recent additions
 
