@@ -199,6 +199,12 @@ Exports (see `schema_analyzer/__init__.py`):
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Highlights since 0.3.0:
 
+- **0.10.0** — **caller-supplied `domainContext`** (override auto domain
+  detection), **incremental re-analysis** (`analyze_incremental` +
+  `assess_change_state` / `refresh_statistics` with stored shape/counts
+  fingerprints and stats-only refresh, PRD §3.13.3), and **field-name masking**
+  (`analysisOptions.redaction.maskFieldNames`) that tokenizes field names before
+  LLM egress and round-trips them back to real names.
 - **0.9.0** — **named-graph awareness**: whole-DB analysis now labels
   named-graph membership (`metadata.graphMembership` + per-entry `graphs`), with
   optional single-graph `graphScope`. Plus **GraphRAG template detection**

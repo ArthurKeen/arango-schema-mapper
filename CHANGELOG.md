@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+(no changes)
+
+## 0.10.0 — 2026-07-04
+
 ### Advanced redaction: field-name masking with round-tripping (PRD §4.3)
 
 - **`maskFieldNames` redaction mode.** Third composable LLM-egress redaction
