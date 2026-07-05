@@ -181,6 +181,15 @@ Exports (see `schema_analyzer/__init__.py`):
   that hashes only the collection set + per-collection type + index digests
 - `fingerprint_physical_counts(db, *, exclude_collections=None)` — shape
   fingerprint combined with per-collection `count()`
+- `assess_change_state(db, *, prior_shape, prior_counts)` — four-valued change
+  state (`unchanged` / `stats_changed` / `shape_changed` / `no_cache`) from the
+  cheap probes, without a full snapshot
+- `refresh_statistics(db, prior)` — stats-only refresh that preserves the cached
+  conceptual schema + physical mapping (see `AnalysisResult.metadata.incrementalRefresh`)
+- `AgenticSchemaAnalyzer.analyze_incremental(db, *, prior=...)` — full re-analysis
+  on shape change, stats-only refresh on count change, reuse when unchanged
+- `AgenticSchemaAnalyzer(domain_context=...)` / `domainContext` request field —
+  supply explicit business-domain priors that override auto-detection
 
 ## Recent additions
 

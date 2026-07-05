@@ -236,6 +236,8 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
             redaction = RedactionOptions.from_dict(analysis_options.get("redaction"))
             raw_gold = analysis_options.get("goldReference")
             gold_reference = raw_gold if isinstance(raw_gold, dict) and raw_gold else None
+            raw_domain_ctx = request.get("domainContext")
+            domain_context = raw_domain_ctx if isinstance(raw_domain_ctx, (dict, str)) and raw_domain_ctx else None
             analyzer = AgenticSchemaAnalyzer(
                 llm_provider=(llm.get("provider") if llm else None),
                 api_key=_get_api_key(llm),
@@ -248,6 +250,7 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
                 max_repair_attempts=max_repair,
                 redaction=redaction if redaction.active else None,
                 gold_reference=gold_reference,
+                domain_context=domain_context,
             )
 
             include_samples = bool(analysis_options.get("includeSamplesInSnapshot") or False)

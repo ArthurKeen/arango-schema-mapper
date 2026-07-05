@@ -9,6 +9,7 @@ from .csi import CSI_VERSION, from_csi, to_csi
 from .diff import diff_analyses
 from .docs import generate_schema_docs
 from .exports import build_cypher_resolution_index, export_mapping
+from .incremental import assess_change_state, refresh_statistics
 from .mapping import PhysicalMapping
 from .metric_history import (
     append_to_history,
@@ -36,6 +37,8 @@ __all__ = [
     "ConceptualSchema",
     "PhysicalMapping",
     "diff_analyses",
+    "assess_change_state",
+    "refresh_statistics",
     "to_csi",
     "from_csi",
     "CSI_VERSION",

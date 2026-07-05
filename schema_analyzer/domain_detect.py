@@ -320,3 +320,47 @@ def detect_domain(snapshot: dict[str, Any], *, min_confidence: float = 0.15) -> 
         return best
 
     return None
+
+
+def domain_hint_from_context(domain_context: dict[str, Any] | str | None) -> DomainHint | None:
+    """Build a :class:`DomainHint` from a caller-supplied domain context (§4.7).
+
+    Lets a consumer override the automatic :func:`detect_domain` with explicit
+    priors. Accepts either a plain domain name string, or a dict::
+
+        {"domain": "healthcare", "description": "...",
+         "entities": [{"name": "Patient"}], "relationships": [{"type": "TREATS"}]}
+
+    The optional ``entities`` / ``relationships`` populate the hint's ``spec`` so
+    the LLM prompt gets the typical-vocabulary block. Caller-provided context is
+    authoritative, so ``confidence`` is ``1.0`` and ``matched_signals`` records
+    the provenance. Returns ``None`` for empty / unusable input.
+    """
+    if isinstance(domain_context, str):
+        name = domain_context.strip()
+        if not name:
+            return None
+        return DomainHint(domain=name, description="", confidence=1.0, matched_signals=["caller-provided"])
+
+    if isinstance(domain_context, dict):
+        name = str(domain_context.get("domain") or "").strip()
+        description = str(domain_context.get("description") or "")
+        entities = domain_context.get("entities")
+        relationships = domain_context.get("relationships")
+        spec: dict[str, Any] | None = None
+        if isinstance(entities, list) or isinstance(relationships, list):
+            spec = {
+                "entities": entities if isinstance(entities, list) else [],
+                "relationships": relationships if isinstance(relationships, list) else [],
+            }
+        if not name and not description and spec is None:
+            return None
+        return DomainHint(
+            domain=name or "provided",
+            description=description,
+            confidence=1.0,
+            matched_signals=["caller-provided"],
+            spec=spec,
+        )
+
+    return None

@@ -70,6 +70,23 @@
       ]
     },
 
+    "domainContext": {
+      "description": "Optional caller-supplied business-domain priors (PRD §4.7). Overrides automatic domain detection for LLM prompt context. Either a domain-name string or an object; entities/relationships (if given) supply the typical-vocabulary block.",
+      "oneOf": [
+        { "type": "string", "minLength": 1, "maxLength": 256 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "domain": { "type": "string", "maxLength": 256 },
+            "description": { "type": "string", "maxLength": 4096 },
+            "entities": { "type": "array", "maxItems": 50000, "items": { "type": "object" } },
+            "relationships": { "type": "array", "maxItems": 50000, "items": { "type": "object" } }
+          }
+        }
+      ]
+    },
+
     "analysisOptions": {
       "type": "object",
       "additionalProperties": false,

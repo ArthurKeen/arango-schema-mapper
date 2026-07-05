@@ -240,8 +240,10 @@ Inspired by **AOE** (`ontology_generator`): multi-signal confidence, structural 
 
 > Status: shape + counts fingerprints and snapshot fingerprint shipped in
 > 0.3.0; see CHANGELOG. Run id, ISO timestamps, and provider/model lineage
-> are emitted via `metadata`. Element-level provenance (3.13.2) and OWL
-> diff (3.13.3 final row) remain future work.
+> are emitted via `metadata`. The 3.13.3 change-state contract, stats-only
+> refresh, and diff all shipped (change-state + refresh via
+> `schema_analyzer.incremental` / `analyze_incremental`; diff via
+> `diff_analyses`). Element-level provenance (3.13.2) shipped.
 
 | Element | Requirement |
 |---|---|
@@ -265,9 +267,9 @@ Schema-analyzer distinguishes between **physical shape** changes (which invalida
 |---|---|
 | **Shape fingerprint** | Cheap `fingerprint_physical_shape(db)` probe — hashes only the collection set, per-collection type, and per-collection sorted index digests `(type, fields, unique, sparse, vci, deduplicate)` with auto-generated `name` and `id` excluded. Stable under ordinary writes. |
 | **Counts fingerprint** | Cheap `fingerprint_physical_counts(db)` probe — shape fingerprint concatenated with per-collection `count()`. Changes whenever either the shape or any collection's row count changes. |
-| **Change-state contract** | Callers comparing current fingerprints against cached fingerprints MUST be able to derive a four-valued status: `unchanged` (both match), `stats_changed` (shape matches, counts differ), `shape_changed` (shape differs), `no_cache` (no prior fingerprint recorded). |
-| **Stats-only refresh** | When status is `stats_changed`, the library MUST preserve the cached `conceptual_schema` and `physical_mapping` and recompute only derived statistics (cf. §3 `statistics` block). Analyzer invocation, OWL regeneration, type-discriminator detection, and sample extraction MUST be skipped on this path. |
-| **Trigger re-analysis** | When status is `shape_changed`, flag prior analysis as **stale** or auto-queue re-run (product policy). |
+| **Change-state contract** | **Shipped.** `incremental.assess_change_state(db, prior_shape, prior_counts)` derives the four-valued status: `unchanged` (both match), `stats_changed` (shape matches, counts differ), `shape_changed` (shape differs), `no_cache` (no prior fingerprint recorded). Prior runs stamp `metadata.shapeFingerprint` / `countsFingerprint` for the comparison. |
+| **Stats-only refresh** | **Shipped.** `incremental.refresh_statistics(db, prior)` (and the `stats_changed` branch of `analyze_incremental`) preserves the cached `conceptual_schema` and `physical_mapping` and recomputes only derived statistics from a minimal `db.collections()` snapshot. Analyzer invocation, OWL regeneration, type-discriminator detection, and sample extraction are skipped; result carries `metadata.incrementalRefresh = "stats_only"`. |
+| **Trigger re-analysis** | **Shipped (library policy).** `analyze_incremental` runs a full `analyze_physical_schema` on `shape_changed` / `no_cache`; the `unchanged` branch returns the prior annotated `incrementalRefresh = "unchanged"`. |
 | **Diff** | Compare two `AnalysisResult` payloads (or OWL exports): added/removed/changed entities, relationships, and mapping styles — analogous to AOE `get_ontology_diff` but scoped to **schema-derived conceptual models**. |
 
 **Implementation notes (non-normative):**
@@ -346,7 +348,7 @@ Tunable defaults are centralized in `defaults.py`:
 
 #### **4.7. Tool contract fidelity**
 
-Fields in `docs/tool-contract/v1/request.schema.json` **must either be implemented** in `tool.py` / `AgenticSchemaAnalyzer` **or be explicitly marked deferred** in this PRD and in schema descriptions. Implemented: **`connection.verifyTls`** (maps to python-arango `verify_override`), **`analysisOptions.maxRepairAttempts`**, **`llm.systemPrompt`**, **`llm.promptVersion`** (participates in LLM cache key with the effective system prompt). Still deferred / future: **`domainContext`** and richer redaction modes. Drift between schema and code undermines agent workflows that rely on the contract.
+Fields in `docs/tool-contract/v1/request.schema.json` **must either be implemented** in `tool.py` / `AgenticSchemaAnalyzer` **or be explicitly marked deferred** in this PRD and in schema descriptions. Implemented: **`connection.verifyTls`** (maps to python-arango `verify_override`), **`analysisOptions.maxRepairAttempts`**, **`llm.systemPrompt`**, **`llm.promptVersion`** (participates in LLM cache key with the effective system prompt), **`domainContext`** (caller-supplied domain priors → `AgenticSchemaAnalyzer.domain_context`), and redaction modes (`analysisOptions.redaction`). Drift between schema and code undermines agent workflows that rely on the contract.
 
 ---
 
@@ -604,7 +606,9 @@ it does not host a query parser/translator. See
   `recommended_review_threshold` (Youden's J on the review gate). Surfaced via
   the `eval` CLI and `compare_reports` drift section; deterministic and
   DB-free so it runs on any saved eval report.
-- Streaming/incremental analysis for large databases
+- ~~Streaming/incremental analysis for large databases~~ _Shipped_ as the
+  §3.13.3 change-state contract + stats-only refresh
+  (`schema_analyzer.incremental`, `AgenticSchemaAnalyzer.analyze_incremental`).
 - Custom provider SDK support beyond OpenAI/Anthropic/OpenRouter
 - ~~**MCP packaging** — Standalone MCP server or module as in §3.11~~ _Shipped in 0.4.0_ as the `arangodb-schema-analyzer-mcp` stdio server (`[mcp]` extra; see §3.11).
 

@@ -1,0 +1,152 @@
+"""Tests for incremental re-analysis + change-state detection (PRD §3.13.3)."""
+
+from __future__ import annotations
+
+from schema_analyzer.analyzer import AgenticSchemaAnalyzer
+from schema_analyzer.incremental import (
+    CHANGE_NO_CACHE,
+    CHANGE_SHAPE_CHANGED,
+    CHANGE_STATS_CHANGED,
+    CHANGE_UNCHANGED,
+    assess_change_state,
+    coerce_prior,
+)
+from schema_analyzer.types import AnalysisResult
+
+
+class _Col:
+    def __init__(self, col_type=2, count=0, indexes=None):
+        self._t = col_type
+        self._c = count
+        self._i = indexes or []
+
+    def properties(self):
+        return {"type": self._t}
+
+    def count(self):
+        return self._c
+
+    def indexes(self):
+        return self._i
+
+
+class _FakeDB:
+    """Fingerprint-able fake DB. ``counts``/``shape`` are tunable to drive states."""
+
+    def __init__(self, *, name="db", cols=None):
+        self.name = name
+        self._cols = cols or {"users": _Col(2, count=3), "follows": _Col(3, count=2)}
+
+    def collections(self):
+        return [{"name": n, "type": c._t} for n, c in self._cols.items()]
+
+    def collection(self, name):
+        return self._cols[name]
+
+
+def _fp(db):
+    from schema_analyzer.snapshot import fingerprint_physical_counts, fingerprint_physical_shape
+
+    return fingerprint_physical_shape(db), fingerprint_physical_counts(db)
+
+
+def test_change_state_no_cache():
+    db = _FakeDB()
+    st = assess_change_state(db)
+    assert st["status"] == CHANGE_NO_CACHE
+    assert st["shapeFingerprint"] and st["countsFingerprint"]
+
+
+def test_change_state_unchanged():
+    db = _FakeDB()
+    shape, counts = _fp(db)
+    st = assess_change_state(db, prior_shape=shape, prior_counts=counts)
+    assert st["status"] == CHANGE_UNCHANGED
+
+
+def test_change_state_stats_changed():
+    db = _FakeDB()
+    shape, counts = _fp(db)
+    db._cols["users"]._c = 99  # row count changes, shape identical
+    st = assess_change_state(db, prior_shape=shape, prior_counts=counts)
+    assert st["status"] == CHANGE_STATS_CHANGED
+    assert st["shapeFingerprint"] == shape  # shape unchanged
+
+
+def test_change_state_shape_changed():
+    db = _FakeDB()
+    shape, counts = _fp(db)
+    db._cols["extra"] = _Col(2, count=1)  # new collection -> shape differs
+    st = assess_change_state(db, prior_shape=shape, prior_counts=counts)
+    assert st["status"] == CHANGE_SHAPE_CHANGED
+
+
+def test_coerce_prior_from_dict():
+    d = {
+        "conceptualSchema": {"entities": [{"name": "User"}], "relationships": [], "properties": []},
+        "physicalMapping": {
+            "entities": {"User": {"style": "COLLECTION", "collectionName": "users"}},
+            "relationships": {},
+        },
+        "metadata": {
+            "confidence": 0.7,
+            "timestamp": "2026-01-01T00:00:00Z",
+            "analyzedCollectionCounts": {"documentCollections": 1, "edgeCollections": 0},
+            "detectedPatterns": [],
+            "shapeFingerprint": "S",
+            "countsFingerprint": "C",
+        },
+    }
+    pr = coerce_prior(d)
+    assert isinstance(pr, AnalysisResult)
+    assert pr.metadata.shape_fingerprint == "S"
+    assert pr.conceptual_schema["entities"][0]["name"] == "User"
+
+
+# ── analyze_incremental orchestration ────────────────────────────────────
+
+
+def _prior_result(db) -> AnalysisResult:
+    # A real baseline analysis stamps shape/counts fingerprints.
+    return AgenticSchemaAnalyzer().analyze_physical_schema(db, use_cache=False)
+
+
+def test_incremental_unchanged_returns_prior_annotated():
+    db = _FakeDB()
+    prior = _prior_result(db)
+    assert prior.metadata.shape_fingerprint is not None
+    res = AgenticSchemaAnalyzer().analyze_incremental(db, prior=prior, use_cache=False)
+    assert res.metadata.incremental_refresh == "unchanged"
+    # conceptual/physical preserved verbatim
+    assert res.conceptual_schema == prior.conceptual_schema
+    assert res.physical_mapping == prior.physical_mapping
+
+
+def test_incremental_stats_changed_refreshes_only_stats():
+    db = _FakeDB()
+    prior = _prior_result(db)
+    db._cols["users"]._c = 500  # counts change, shape same
+    res = AgenticSchemaAnalyzer().analyze_incremental(db, prior=prior, use_cache=False)
+    assert res.metadata.incremental_refresh == "stats_only"
+    assert res.conceptual_schema == prior.conceptual_schema  # preserved
+    assert res.physical_mapping == prior.physical_mapping
+    assert res.metadata.counts_fingerprint != prior.metadata.counts_fingerprint
+
+
+def test_incremental_shape_changed_full_reanalysis():
+    db = _FakeDB()
+    prior = _prior_result(db)
+    db._cols["orgs"] = _Col(2, count=1)  # new collection -> full re-analyze
+    res = AgenticSchemaAnalyzer().analyze_incremental(db, prior=prior, use_cache=False)
+    # full analysis does not set incremental_refresh
+    assert res.metadata.incremental_refresh is None
+    assert "Org" in res.physical_mapping["entities"] or "orgs" in {
+        e.get("collectionName") for e in res.physical_mapping["entities"].values()
+    }
+
+
+def test_incremental_no_prior_is_full_analysis():
+    db = _FakeDB()
+    res = AgenticSchemaAnalyzer().analyze_incremental(db, use_cache=False)
+    assert res.metadata.incremental_refresh is None
+    assert res.metadata.shape_fingerprint is not None

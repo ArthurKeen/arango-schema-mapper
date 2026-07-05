@@ -27,6 +27,17 @@ class AnalysisMetadata(BaseModel):
     analysis_started_at: str | None = Field(default=None, alias="analysisStartedAt")
     analysis_completed_at: str | None = Field(default=None, alias="analysisCompletedAt")
     physical_schema_fingerprint: str | None = Field(default=None, alias="physicalSchemaFingerprint")
+    # Cheap change-detection probes (PRD §3.13.3): shape fingerprint (collections
+    # + types + index digests) and counts fingerprint (shape + per-collection
+    # row counts). Stored so a later cheap re-probe can derive the four-valued
+    # change state (unchanged / stats_changed / shape_changed / no_cache) without
+    # a full snapshot — see schema_analyzer.incremental.
+    shape_fingerprint: str | None = Field(default=None, alias="shapeFingerprint")
+    counts_fingerprint: str | None = Field(default=None, alias="countsFingerprint")
+    # Set by the incremental path (schema_analyzer.incremental): "unchanged"
+    # (returned prior as-is), "stats_only" (recomputed only statistics), or
+    # absent for a full analysis.
+    incremental_refresh: str | None = Field(default=None, alias="incrementalRefresh")
     cache_hit: bool = Field(default=False, alias="cacheHit")
     prompt_version: str | None = Field(default=None, alias="promptVersion")
     detected_domain: str | None = Field(default=None, alias="detectedDomain")

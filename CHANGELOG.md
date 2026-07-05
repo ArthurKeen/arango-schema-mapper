@@ -2,7 +2,36 @@
 
 ## Unreleased
 
-(no changes)
+### Caller-supplied domain context (PRD §4.7)
+
+- **`domainContext` request field / `AgenticSchemaAnalyzer(domain_context=...)`.**
+  Callers can now supply explicit business-domain priors (a domain-name string,
+  or an object `{domain, description, entities, relationships}`) that override
+  automatic `detect_domain` detection for the LLM prompt. Optional
+  `entities`/`relationships` populate the "typical vocabulary" prompt block.
+  Provided context is authoritative (`metadata.detectedDomainConfidence = 1.0`);
+  new helper `domain_detect.domain_hint_from_context`. Falls back to auto-detect
+  when unset.
+
+### Incremental re-analysis + change-state detection (PRD §3.13.3)
+
+- **Stored change-detection fingerprints.** Every analysis now stamps
+  `metadata.shapeFingerprint` (collections + types + index digests) and
+  `metadata.countsFingerprint` (shape + per-collection row counts) via the cheap
+  `fingerprint_physical_shape` / `fingerprint_physical_counts` probes, so a later
+  re-probe can decide whether a refresh is warranted without a full snapshot.
+- **`assess_change_state(db, prior_shape, prior_counts)`.** Derives the
+  four-valued state: `unchanged`, `stats_changed`, `shape_changed`, `no_cache`.
+- **`refresh_statistics(db, prior)`.** Stats-only refresh: preserves the cached
+  conceptual schema + physical mapping and recomputes only the statistics block
+  (from a minimal `db.collections()` snapshot — no discriminator detection,
+  sampling, OWL, or LLM), updating `countsFingerprint` and stamping
+  `metadata.incrementalRefresh = "stats_only"`.
+- **`AgenticSchemaAnalyzer.analyze_incremental(db, prior=...)`.** Orchestrates
+  the above: `shape_changed`/`no_cache` → full analysis; `stats_changed` →
+  stats-only refresh; `unchanged` → returns the prior annotated
+  `incrementalRefresh = "unchanged"`. New module `schema_analyzer/incremental.py`;
+  `assess_change_state` / `refresh_statistics` exported from the package root.
 
 ## 0.9.0
 

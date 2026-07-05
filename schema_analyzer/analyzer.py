@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from arango.database import StandardDatabase
 
 from .baseline import infer_baseline_from_snapshot
@@ -25,7 +27,7 @@ from .defaults import (
     MAX_REPAIR_ATTEMPTS,
     MIN_LLM_BUDGET_MS,
 )
-from .domain_detect import DomainHint, detect_domain
+from .domain_detect import DomainHint, detect_domain, domain_hint_from_context
 from .enrichment import (
     _apply_collection_name_allowlist,
     _apply_graph_membership,
@@ -42,12 +44,25 @@ from .enrichment import (
     _arango_product_status_for,
 )
 from .errors import SchemaAnalyzerError
+from .incremental import (
+    CHANGE_NO_CACHE,
+    CHANGE_SHAPE_CHANGED,
+    CHANGE_STATS_CHANGED,
+    assess_change_state,
+    coerce_prior,
+    refresh_statistics,
+)
 from .mapping import PhysicalMapping
 from .provenance import annotate_provenance
 from .providers import create_provider, get_default_model, get_provider_env_var
 from .quality import build_quality_block
 from .redaction import RedactionOptions, redact_snapshot_for_egress
-from .snapshot import fingerprint_physical_schema, snapshot_physical_schema
+from .snapshot import (
+    fingerprint_physical_counts,
+    fingerprint_physical_schema,
+    fingerprint_physical_shape,
+    snapshot_physical_schema,
+)
 from .types import AnalysisMetadata, AnalysisResult, now_iso
 from .utils import analysis_cache_storage_key, stable_dumps
 from .workflow import async_generate_validate_repair, run_generate_validate_repair
@@ -196,10 +211,14 @@ class _AnalysisContext(NamedTuple):
     domain_hint: DomainHint | None = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class _ProvenanceStamp:
     run_id: str
     started_at: str
+    # Cheap change-detection fingerprints, filled in during _prepare_analysis
+    # (§3.13.3) and stamped onto the result metadata by _stamp_metadata.
+    shape_fingerprint: str | None = None
+    counts_fingerprint: str | None = None
 
 
 @dataclass
@@ -219,6 +238,10 @@ class AgenticSchemaAnalyzer:
     # set, metadata.qualityMetrics gains a ``gold`` block and its overlap folds
     # into the health score.
     gold_reference: dict[str, Any] | None = None
+    # Optional caller-supplied domain context (PRD §4.7): a domain name string
+    # or dict {domain, description, entities, relationships}. When set it
+    # overrides automatic domain detection for LLM prompt priors.
+    domain_context: dict[str, Any] | str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.cache, dict) or self.cache is None:
@@ -244,6 +267,8 @@ class AgenticSchemaAnalyzer:
                 "analysis_started_at": prov.started_at,
                 "analysis_completed_at": now_iso(),
                 "physical_schema_fingerprint": physical_fingerprint,
+                "shape_fingerprint": prov.shape_fingerprint,
+                "counts_fingerprint": prov.counts_fingerprint,
                 "cache_hit": cache_hit,
                 "prompt_version": self.prompt_version,
             }
@@ -277,6 +302,15 @@ class AgenticSchemaAnalyzer:
         snapshot["generated_at"] = now_iso()
         fingerprint = fingerprint_physical_schema(snapshot, include_samples=False)
 
+        # Cheap change-detection probes (§3.13.3), stamped onto the result so a
+        # later incremental re-probe can derive the change state without a full
+        # snapshot. Best-effort: degrade to None if the DB handle can't answer.
+        try:
+            prov.shape_fingerprint = fingerprint_physical_shape(db)
+            prov.counts_fingerprint = fingerprint_physical_counts(db)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("shape/counts fingerprint probe failed: %s", exc)
+
         api_key = self.api_key or (_api_key_from_env(self.llm_provider) if self.llm_provider else None)
         use_llm = bool(self.llm_provider and api_key)
         system_effective = self._effective_system_prompt()
@@ -300,9 +334,10 @@ class AgenticSchemaAnalyzer:
                     metadata=stamped,
                 )
 
-        domain_hint = detect_domain(snapshot)
+        domain_hint = domain_hint_from_context(self.domain_context) or detect_domain(snapshot)
         if domain_hint:
-            logger.info("Detected domain=%s (confidence=%.2f)", domain_hint.domain, domain_hint.confidence)
+            source = "provided" if "caller-provided" in domain_hint.matched_signals else "detected"
+            logger.info("Domain %s=%s (confidence=%.2f)", source, domain_hint.domain, domain_hint.confidence)
 
         if not use_llm:
             logger.info("No LLM provider configured; falling back to baseline inference")
@@ -478,6 +513,60 @@ class AgenticSchemaAnalyzer:
             use_cache=use_cache,
             prov=prov,
             domain_hint=prep.domain_hint,
+        )
+
+    def analyze_incremental(
+        self,
+        db: StandardDatabase,
+        *,
+        prior: AnalysisResult | dict[str, Any] | None = None,
+        exclude_collections: Iterable[str] | None = None,
+        **analyze_kwargs: Any,
+    ) -> AnalysisResult:
+        """Analyze only as much as the schema change warrants (PRD §3.13.3).
+
+        Given a ``prior`` result (carrying ``metadata.shapeFingerprint`` /
+        ``countsFingerprint``), cheaply probe the database and:
+
+        * ``shape_changed`` / ``no_cache`` → run a full ``analyze_physical_schema``
+          (forwarding ``analyze_kwargs``);
+        * ``stats_changed`` → recompute only the statistics block, preserving the
+          cached conceptual schema + physical mapping;
+        * ``unchanged`` → return the prior result annotated ``incrementalRefresh
+          = "unchanged"``.
+
+        With no ``prior``, this is just a full analysis.
+        """
+        if prior is None:
+            return self.analyze_physical_schema(db, **analyze_kwargs)
+
+        pr = coerce_prior(prior)
+        state = assess_change_state(
+            db,
+            prior_shape=pr.metadata.shape_fingerprint,
+            prior_counts=pr.metadata.counts_fingerprint,
+            exclude_collections=exclude_collections,
+        )
+        status = state["status"]
+        logger.info("Incremental analysis change-state: %s", status)
+
+        if status in (CHANGE_SHAPE_CHANGED, CHANGE_NO_CACHE):
+            return self.analyze_physical_schema(db, **analyze_kwargs)
+        if status == CHANGE_STATS_CHANGED:
+            return refresh_statistics(db, pr)
+
+        # unchanged
+        meta = pr.metadata.model_copy(
+            update={
+                "incremental_refresh": "unchanged",
+                "cache_hit": True,
+                "analysis_completed_at": now_iso(),
+            }
+        )
+        return AnalysisResult(
+            conceptual_schema=pr.conceptual_schema,
+            physical_mapping=pr.physical_mapping,
+            metadata=meta,
         )
 
     async def analyze_physical_schema_async(
