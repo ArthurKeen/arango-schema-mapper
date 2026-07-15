@@ -217,6 +217,9 @@ class _AnalysisContext(NamedTuple):
     # real-name→token map when field-name masking is active; used to un-mask the
     # LLM response so the result carries real field names (PRD §4.3).
     field_name_map: dict[str, str] | None = None
+    # baseline entity modeling strategy: "auto" (LPG/PG heuristic) or "collection"
+    # (force one entity per collection — correct for pure property-graph schemas).
+    entity_strategy: str = "auto"
 
 
 @dataclass
@@ -292,6 +295,7 @@ class AgenticSchemaAnalyzer:
         include_samples_in_snapshot: bool = False,
         use_cache: bool = True,
         graph_scope: str | None = None,
+        entity_strategy: Literal["auto", "collection"] = "auto",
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult | _AnalysisContext:
         """Shared setup for sync and async analysis paths.
@@ -351,7 +355,9 @@ class AgenticSchemaAnalyzer:
             logger.info("No LLM provider configured; falling back to baseline inference")
             doc_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "document")
             edge_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "edge")
-            baseline = infer_baseline_from_snapshot(snapshot)
+            baseline = infer_baseline_from_snapshot(
+                snapshot, collection_per_entity=entity_strategy == "collection"
+            )
             stats_holder: dict[str, Any] = {
                 "physicalMapping": baseline.get("physicalMapping", {}),
                 "conceptualSchema": baseline.get("conceptualSchema", {}),
@@ -450,6 +456,7 @@ class AgenticSchemaAnalyzer:
             max_repair_attempts=self._repair_limit(),
             domain_hint=domain_hint,
             field_name_map=field_name_map,
+            entity_strategy=entity_strategy,
         )
 
     def analyze_physical_schema(
@@ -461,6 +468,7 @@ class AgenticSchemaAnalyzer:
         include_samples_in_snapshot: bool = False,
         use_cache: bool = True,
         graph_scope: str | None = None,
+        entity_strategy: Literal["auto", "collection"] = "auto",
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult:
         prov = _ProvenanceStamp(run_id=str(uuid.uuid4()), started_at=now_iso())
@@ -472,6 +480,7 @@ class AgenticSchemaAnalyzer:
             include_samples_in_snapshot=include_samples_in_snapshot,
             use_cache=use_cache,
             graph_scope=graph_scope,
+            entity_strategy=entity_strategy,
             _snapshot=_snapshot,
         )
         if isinstance(prep, AnalysisResult):
@@ -496,7 +505,9 @@ class AgenticSchemaAnalyzer:
             _apply_reconciliation(data, prep.snapshot, warnings)
         except SchemaAnalyzerError as e:
             logger.warning("LLM workflow failed, falling back to baseline: %s", e)
-            baseline = infer_baseline_from_snapshot(prep.snapshot)
+            baseline = infer_baseline_from_snapshot(
+                prep.snapshot, collection_per_entity=prep.entity_strategy == "collection"
+            )
             data = {
                 "conceptualSchema": baseline.get("conceptualSchema", {}),
                 "physicalMapping": baseline.get("physicalMapping", {}),
@@ -596,6 +607,7 @@ class AgenticSchemaAnalyzer:
         include_samples_in_snapshot: bool = False,
         use_cache: bool = True,
         graph_scope: str | None = None,
+        entity_strategy: Literal["auto", "collection"] = "auto",
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult:
         """Async version of analyze_physical_schema. Requires provider with agenerate()."""
@@ -608,6 +620,7 @@ class AgenticSchemaAnalyzer:
             include_samples_in_snapshot=include_samples_in_snapshot,
             use_cache=use_cache,
             graph_scope=graph_scope,
+            entity_strategy=entity_strategy,
             _snapshot=_snapshot,
         )
         if isinstance(prep, AnalysisResult):
@@ -632,7 +645,9 @@ class AgenticSchemaAnalyzer:
             _apply_reconciliation(data, prep.snapshot, warnings)
         except SchemaAnalyzerError as e:
             logger.warning("Async LLM workflow failed, falling back to baseline: %s", e)
-            baseline = infer_baseline_from_snapshot(prep.snapshot)
+            baseline = infer_baseline_from_snapshot(
+                prep.snapshot, collection_per_entity=prep.entity_strategy == "collection"
+            )
             data = {
                 "conceptualSchema": baseline.get("conceptualSchema", {}),
                 "physicalMapping": baseline.get("physicalMapping", {}),

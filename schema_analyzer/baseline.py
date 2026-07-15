@@ -246,13 +246,23 @@ def _build_property_mapping(props: list[dict[str, Any]]) -> dict[str, dict[str, 
     return mapping
 
 
-def infer_baseline_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+def infer_baseline_from_snapshot(
+    snapshot: dict[str, Any], *, collection_per_entity: bool = False
+) -> dict[str, Any]:
     """
     Deterministic baseline inference from a physical schema snapshot.
 
     Detects LPG vs PG physical model style, extracts the correct ontology
     (entities + relationships), resolves domain/range from edge endpoints,
     and populates properties from observed fields.
+
+    When ``collection_per_entity`` is True, type-discriminator inference is
+    skipped entirely: every document collection maps to exactly one entity
+    (``COLLECTION`` style) and every edge collection to one relationship
+    (``DEDICATED_COLLECTION`` style). This is the correct model for a pure
+    property-graph schema (one collection per type) where the collections
+    already *are* the types, so attribute fields (e.g. ``region``) must not be
+    mistaken for type tags. Default (False) preserves the auto LPG/PG heuristic.
     """
     cs = ConceptualSchema.empty()
     pm = PhysicalMapping.empty()
@@ -278,7 +288,7 @@ def infer_baseline_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 
         col_indexes = _extract_indexes_for_mapping(col)
 
-        type_field = _choose_type_field(col, is_edge=False)
+        type_field = None if collection_per_entity else _choose_type_field(col, is_edge=False)
         if type_field:
             if "LPG_LABEL" not in detected_patterns:
                 detected_patterns.append("LPG_LABEL")
@@ -330,7 +340,7 @@ def infer_baseline_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 
         edge_indexes = _extract_indexes_for_mapping(col)
 
-        type_field = _choose_type_field(col, is_edge=True)
+        type_field = None if collection_per_entity else _choose_type_field(col, is_edge=True)
         if type_field:
             if "LPG_GENERIC_EDGE" not in detected_patterns:
                 detected_patterns.append("LPG_GENERIC_EDGE")

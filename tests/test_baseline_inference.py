@@ -580,3 +580,85 @@ def test_single_value_edge_discriminator_detected_patterns():
     assert "PG_ENTITY_COLLECTION" in patterns
     assert "LPG_GENERIC_EDGE" in patterns
     assert "PG_DEDICATED_EDGE" not in patterns
+
+
+# ── Collection-per-entity strategy (pure property-graph schemas) ───────
+# Motivating bug: on a PG schema (one collection per type) with a uniform `type`
+# field, the auto heuristic mistakes a high-cardinality attribute (e.g. region)
+# for a type discriminator and shatters a collection into value-classes.
+
+
+def _pg_attribute_misfire_snapshot():
+    return {
+        "version": 1,
+        "collections": [
+            {
+                "name": "aws_s3_bucket",
+                "type": "document",
+                "candidate_type_fields": ["region"],
+                "sample_field_value_counts": {
+                    "region": [
+                        {"value": "us-east-1", "count": 3},
+                        {"value": "eu-west-1", "count": 2},
+                        {"value": "ap-south-1", "count": 1},
+                    ]
+                },
+            },
+            {
+                "name": "CAN_ACCESS",
+                "type": "edge",
+                "inferred_relationship_type": "CAN_ACCESS",
+                "candidate_type_fields": ["destination_sub_type"],
+                "sample_field_value_counts": {
+                    "destination_sub_type": [
+                        {"value": "aws_s3_bucket", "count": 4},
+                        {"value": "aws_ec2_instance", "count": 2},
+                    ]
+                },
+            },
+        ],
+        "graphs": [],
+    }
+
+
+def test_auto_strategy_misfires_on_pg_attribute():
+    """Documents the motivating bug: auto mode treats an attribute as a type tag."""
+    out = infer_baseline_from_snapshot(_pg_attribute_misfire_snapshot())
+    ents = out["conceptualSchema"]["entities"]
+    assert len(ents) > 1  # region shattered the collection into value-classes
+
+
+def test_collection_strategy_forces_one_entity_per_collection():
+    out = infer_baseline_from_snapshot(
+        _pg_attribute_misfire_snapshot(), collection_per_entity=True
+    )
+    ents = out["conceptualSchema"]["entities"]
+    assert len(ents) == 1
+    pm_ent = next(iter(out["physicalMapping"]["entities"].values()))
+    assert pm_ent["style"] == "COLLECTION"
+    assert pm_ent["collectionName"] == "aws_s3_bucket"
+    rels = out["conceptualSchema"]["relationships"]
+    assert len(rels) == 1
+    pm_rel = next(iter(out["physicalMapping"]["relationships"].values()))
+    assert pm_rel["style"] == "DEDICATED_COLLECTION"
+    assert pm_rel["edgeCollectionName"] == "CAN_ACCESS"
+    patterns = out.get("detectedPatterns", [])
+    assert "PG_ENTITY_COLLECTION" in patterns
+    assert "PG_DEDICATED_EDGE" in patterns
+    assert "LPG_LABEL" not in patterns
+
+
+def test_collection_strategy_overrides_genuine_lpg_discriminator():
+    """Even a real LPG type field is ignored under collection_per_entity."""
+    out = infer_baseline_from_snapshot(_neo4j_movies_lpg_snapshot(), collection_per_entity=True)
+    ents = {e["name"] for e in out["conceptualSchema"]["entities"]}
+    assert ents == {"Node"}
+    assert out["physicalMapping"]["entities"]["Node"]["style"] == "COLLECTION"
+
+
+def test_collection_strategy_default_is_auto_no_behavior_change():
+    default = infer_baseline_from_snapshot(_neo4j_movies_lpg_snapshot())
+    explicit = infer_baseline_from_snapshot(_neo4j_movies_lpg_snapshot(), collection_per_entity=False)
+    d = {e["name"] for e in default["conceptualSchema"]["entities"]}
+    a = {e["name"] for e in explicit["conceptualSchema"]["entities"]}
+    assert d == a == {"Movie", "Person"}
