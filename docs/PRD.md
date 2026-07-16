@@ -82,7 +82,17 @@ The system must automatically detect and classify physical schema patterns:
 
 Detection uses candidate type field analysis from `sample_field_value_counts` in the snapshot.
 
-**Implementation**: Baseline heuristic inference in `baseline.py` (`infer_baseline_from_snapshot()`).
+The automatic discriminator heuristic must be **overridable**: on a pure-PG schema
+(one collection per type) whose collections carry a plausible-looking but
+non-discriminating field (e.g. a high-cardinality `region` attribute), auto
+detection can shatter each collection into value-classes. Callers must be able to
+pass `entity_strategy="collection"` to `analyze_physical_schema` (sync and async)
+to skip discriminator inference entirely and map one entity per document
+collection (`COLLECTION`) and one relationship per edge collection
+(`DEDICATED_COLLECTION`), deterministically and without LLM involvement. The
+default `entity_strategy="auto"` preserves the detection behavior above.
+
+**Implementation**: Baseline heuristic inference in `baseline.py` (`infer_baseline_from_snapshot()`); `entity_strategy` override in `analyzer.py` (`analyze_physical_schema`, threaded via `_prepare_analysis` to `infer_baseline_from_snapshot(collection_per_entity=…)`) and `baseline.py:250` (`collection_per_entity` parameter, discriminator skip at `baseline.py:291` / `baseline.py:343`).
 
 #### **3.5. Agentic Semantic Enrichment (LLM)**
 
