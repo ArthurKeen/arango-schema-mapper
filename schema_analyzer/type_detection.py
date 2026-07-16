@@ -118,7 +118,12 @@ def _iter_scalar_values(v: Any):
         return
 
 
-def _pick_best_type_field(entry: dict[str, Any], *, is_edge: bool = False) -> str | None:
+def _pick_best_type_field(
+    entry: dict[str, Any],
+    *,
+    is_edge: bool = False,
+    max_distinct_values: int | None = None,
+) -> str | None:
     """Pick the best type-discriminator field from snapshot stats.
 
     Acceptance rules (any failure disqualifies the field):
@@ -145,7 +150,17 @@ def _pick_best_type_field(entry: dict[str, Any], *, is_edge: bool = False) -> st
     generic-but-currently-single-type edge collection from a dedicated PG
     edge that carries a redundant metadata field (e.g. ``mentions`` edges
     with ``relation = "mentions"``).
+
+    ``max_distinct_values`` overrides ``MAX_TYPE_FIELD_DISTINCT_VALUES`` —
+    used when the snapshot was captured with a raised value-sampling top-K
+    (``max_entity_types``), so a caller who asked for 50 entity types does
+    not get the field rejected for having more than 32 observed values.
     """
+    max_distinct = (
+        max_distinct_values
+        if isinstance(max_distinct_values, int) and max_distinct_values > 0
+        else MAX_TYPE_FIELD_DISTINCT_VALUES
+    )
     candidates = entry.get("candidate_type_fields") or []
     value_counts = entry.get("sample_field_value_counts") or {}
     total_docs = int(entry.get("count") or 0)
@@ -156,14 +171,14 @@ def _pick_best_type_field(entry: dict[str, Any], *, is_edge: bool = False) -> st
     best_n = 0
     for f in ordered:
         items = value_counts.get(f)
-        if not _passes_distribution_shape(items, total_docs):
+        if not _passes_distribution_shape(items, total_docs, max_distinct=max_distinct):
             continue
         n = len({str(it["value"]) for it in (items or []) if isinstance(it, dict) and "value" in it})
         if n > best_n:
             best = f
             best_n = n
 
-    if best is not None and MIN_TYPE_FIELD_DISTINCT_VALUES <= best_n <= MAX_TYPE_FIELD_DISTINCT_VALUES:
+    if best is not None and MIN_TYPE_FIELD_DISTINCT_VALUES <= best_n <= max_distinct:
         return best
 
     if is_edge:
@@ -177,6 +192,8 @@ def _pick_best_type_field(entry: dict[str, Any], *, is_edge: bool = False) -> st
 def _passes_distribution_shape(
     items: Any,
     total_docs: int,
+    *,
+    max_distinct: int = MAX_TYPE_FIELD_DISTINCT_VALUES,
 ) -> bool:
     """
     Gate a candidate field on its observed value distribution.
@@ -185,7 +202,7 @@ def _passes_distribution_shape(
       * ``items`` is a list of ``{"value", "count"}`` dicts,
       * every value is a string matching the discriminator shape rule,
       * the distinct count is within
-        ``[MIN_TYPE_FIELD_DISTINCT_VALUES, MAX_TYPE_FIELD_DISTINCT_VALUES]``,
+        ``[MIN_TYPE_FIELD_DISTINCT_VALUES, max_distinct]``,
       * the sum of observed counts covers at least
         ``MIN_TYPE_FIELD_COVERAGE_FRACTION`` of ``total_docs``
         (or ``total_docs`` is unknown / 0, in which case we accept based on
@@ -211,7 +228,7 @@ def _passes_distribution_shape(
     if n_distinct < MIN_TYPE_FIELD_DISTINCT_VALUES:
         # Single-value fallback is handled separately upstream.
         return n_distinct == 1
-    if n_distinct > MAX_TYPE_FIELD_DISTINCT_VALUES:
+    if n_distinct > max_distinct:
         return False
     return not (
         total_docs > 0 and observed_count > 0 and (observed_count / total_docs) < MIN_TYPE_FIELD_COVERAGE_FRACTION

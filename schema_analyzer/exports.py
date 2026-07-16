@@ -16,7 +16,10 @@ SUPPORTED_EXPORT_TARGETS = ("cypher", "sparql")
 # Resolution keys copied verbatim from a physical-mapping entry into a
 # transpiler-facing block. Kept small and explicit so the export contract is
 # stable even if the internal mapping grows new bookkeeping fields.
-_ENTITY_RESOLUTION_KEYS = ("style", "collectionName", "typeField", "typeValue")
+# ``aliases`` carries the raw discriminator value(s) whose PascalCase-derived
+# entity name is lossy (FIN_METRIC → FINMETRIC), so a transpiler can resolve
+# the label a Cypher author actually sees in the data.
+_ENTITY_RESOLUTION_KEYS = ("style", "collectionName", "typeField", "typeValue", "aliases")
 _RELATIONSHIP_RESOLUTION_KEYS = ("style", "edgeCollectionName", "typeField", "typeValue")
 
 

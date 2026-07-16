@@ -46,6 +46,14 @@ class AnalysisMetadata(BaseModel):
     # analyzer had to backfill collections the LLM omitted. Absent when the
     # LLM output already covered every snapshot collection.
     reconciliation: dict[str, Any] | None = Field(default=None)
+    # Discriminator values dropped by the snapshot's top-K value sampling
+    # (docs/cypher-vocabulary-fidelity-bug-report.md issue #2). Each record
+    # names the collection, type field, true distinct total, and the dropped
+    # classes with counts, so a downstream Cypher author can see why a label
+    # is absent from the mapping. ``None``/absent when nothing was dropped.
+    # Raise the cap via ``analyze_physical_schema(max_entity_types=...)``.
+    entity_type_caps: list[dict[str, Any]] | None = Field(default=None, alias="entityTypeCaps")
+    relationship_type_caps: list[dict[str, Any]] | None = Field(default=None, alias="relationshipTypeCaps")
     # Populated by the per-relationship cost statistics pass (issue #3) when
     # a live DB handle is available. ``statistics_status`` reports the
     # computation outcome (``"ok"``, ``"partial"``, ``"skipped_no_db"``)

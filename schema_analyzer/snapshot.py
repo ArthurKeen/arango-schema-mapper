@@ -17,6 +17,8 @@ from ._arango import (
     graph_properties,
 )
 from .defaults import (
+    MAX_TYPE_FIELD_DISTINCT_VALUES,
+    SAMPLE_VALUE_OVERFLOW_K,
     SAMPLE_VALUE_TOP_K,
     SNAPSHOT_FORMAT_VERSION,
 )
@@ -39,10 +41,19 @@ _PROPERTY_SAMPLE_LIMIT = 10
 def _detect_type_fields_via_collect(
     db: StandardDatabase,
     collection_name: str,
-) -> tuple[list[str], dict[str, list[dict[str, Any]]]]:
+    *,
+    top_k: int = SAMPLE_VALUE_TOP_K,
+) -> tuple[list[str], dict[str, list[dict[str, Any]]], dict[str, int], dict[str, list[dict[str, Any]]]]:
     """
     Detect type discriminator fields using AQL COLLECT for accurate counting.
     Unlike LIMIT-based sampling, this scans all documents and finds every distinct value.
+
+    Returns ``(candidates, value_counts, distinct_counts, overflow)``:
+    ``value_counts`` keeps the top ``top_k`` values per field (unchanged
+    contract), ``distinct_counts`` records each field's TRUE non-null distinct
+    total, and ``overflow`` keeps up to ``SAMPLE_VALUE_OVERFLOW_K`` values
+    ranked past the top-K — so a dropped discriminator value (e.g. a class
+    ranked 24th under a top-20 cap) is reportable instead of silently absent.
     """
     try:
         cursor = aql_execute(
@@ -52,35 +63,54 @@ def _detect_type_fields_via_collect(
         )
         samples = list(cursor)
     except Exception:
-        return [], {}
+        return [], {}, {}, {}
 
     if not samples:
-        return [], {}
+        return [], {}, {}, {}
 
     sample = samples[0] if isinstance(samples[0], dict) else {}
     candidates = _detect_candidate_type_fields(sample)
     if not candidates:
-        return [], {}
+        return [], {}, {}, {}
 
     value_counts: dict[str, list[dict[str, Any]]] = {}
+    distinct_counts: dict[str, int] = {}
+    overflow: dict[str, list[dict[str, Any]]] = {}
     for key in candidates:
         try:
             cursor = aql_execute(
                 db,
+                "LET groups = ("
                 "FOR d IN @@c "
                 "COLLECT val = d[@field] WITH COUNT INTO cnt "
                 "FILTER val != null "
-                "SORT cnt DESC LIMIT @top "
-                "RETURN {value: val, count: cnt}",
-                bind_vars={"@c": collection_name, "field": key, "top": SAMPLE_VALUE_TOP_K},
+                "SORT cnt DESC "
+                "RETURN {value: val, count: cnt}"
+                ") "
+                "RETURN {distinct: LENGTH(groups), "
+                "top: SLICE(groups, 0, @top), "
+                "overflow: SLICE(groups, @top, @overflowLen)}",
+                bind_vars={
+                    "@c": collection_name,
+                    "field": key,
+                    "top": top_k,
+                    "overflowLen": SAMPLE_VALUE_OVERFLOW_K,
+                },
             )
-            items = list(cursor)
-            if items:
+            rows = list(cursor)
+            row = rows[0] if rows and isinstance(rows[0], dict) else {}
+            items = row.get("top")
+            if isinstance(items, list) and items:
                 value_counts[key] = items
+                if isinstance(row.get("distinct"), int):
+                    distinct_counts[key] = row["distinct"]
+                extra = row.get("overflow")
+                if isinstance(extra, list) and extra:
+                    overflow[key] = extra
         except Exception:
             continue
 
-    return candidates, value_counts
+    return candidates, value_counts, distinct_counts, overflow
 
 
 def _detect_observed_fields(
@@ -599,6 +629,7 @@ def snapshot_physical_schema(
     sample_limit_per_collection: int = 0,
     include_samples_in_snapshot: bool = False,
     graph_scope: str | None = None,
+    sample_value_top_k: int | None = None,
 ) -> dict[str, Any]:
     """
     Deterministic physical schema snapshot using python-arango Database.
@@ -612,7 +643,16 @@ def snapshot_physical_schema(
     orphan collections); all other user collections are excluded. Useful to
     bound cost / LLM egress / focus on a single subsystem. Raises
     ``INVALID_ARGUMENT`` if the named graph does not exist.
+
+    ``sample_value_top_k`` raises (or lowers) the per-field distinct-value cap
+    kept in ``sample_field_value_counts`` — and thereby the maximum number of
+    entity/relationship types derivable from one discriminated collection.
+    Default ``None`` keeps ``SAMPLE_VALUE_TOP_K``. When raised past
+    ``MAX_TYPE_FIELD_DISTINCT_VALUES``, the discriminator acceptance bound
+    scales with it so the extra observed values don't disqualify the field.
     """
+    top_k = sample_value_top_k if isinstance(sample_value_top_k, int) and sample_value_top_k > 0 else SAMPLE_VALUE_TOP_K
+    max_distinct = max(MAX_TYPE_FIELD_DISTINCT_VALUES, top_k)
     collections_info = db.collections()
     if isinstance(collections_info, dict):
         collections = collections_info
@@ -635,6 +675,7 @@ def snapshot_physical_schema(
     snapshot: dict[str, Any] = {
         "version": SNAPSHOT_FORMAT_VERSION,
         "generated_at": None,
+        "sample_value_top_k": top_k,
         "collections": [],
         "graphs": [],
         "database": _collect_database_properties(db),
@@ -681,16 +722,21 @@ def snapshot_physical_schema(
 
     # ── Phase 2: Detect type discriminators for ALL collections (COLLECT) ──
     for entry in entries:
-        candidates, value_counts = _detect_type_fields_via_collect(db, entry["name"])
+        candidates, value_counts, distinct_counts, overflow = _detect_type_fields_via_collect(
+            db, entry["name"], top_k=top_k
+        )
         entry["candidate_type_fields"] = candidates
         entry["sample_field_value_counts"] = value_counts
+        entry["sample_field_distinct_counts"] = distinct_counts
+        if overflow:
+            entry["sample_field_value_overflow"] = overflow
 
     # ── Phase 3: Build doc type field map for edge endpoint resolution ──
     doc_type_info: dict[str, tuple[str, set[str]]] = {}
     for entry in entries:
         if entry["type"] != "document":
             continue
-        best_field = _pick_best_type_field(entry, is_edge=False)
+        best_field = _pick_best_type_field(entry, is_edge=False, max_distinct_values=max_distinct)
         if best_field:
             values = set(_type_values_for_field(entry, best_field))
             if values:
@@ -699,7 +745,7 @@ def snapshot_physical_schema(
     # ── Phase 4: Detect edge endpoints and property fields ──────────────
     for entry in entries:
         is_edge = entry["type"] == "edge"
-        best_field = _pick_best_type_field(entry, is_edge=is_edge)
+        best_field = _pick_best_type_field(entry, is_edge=is_edge, max_distinct_values=max_distinct)
         type_values = _type_values_for_field(entry, best_field) if best_field else None
 
         if is_edge:

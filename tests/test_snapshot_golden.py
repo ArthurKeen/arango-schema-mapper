@@ -63,7 +63,17 @@ class FakeDB:
                             agg[k] = {"value": val, "count": 0}
                         agg[k]["count"] += 1
                     items = sorted(agg.values(), key=lambda x: (-x["count"], str(x["value"])))
-                    return iter(items[: bind_vars.get("top", 20)])
+                    top = bind_vars.get("top", 20)
+                    overflow_len = bind_vars.get("overflowLen", 50)
+                    return iter(
+                        [
+                            {
+                                "distinct": len(items),
+                                "top": items[:top],
+                                "overflow": items[top : top + overflow_len],
+                            }
+                        ]
+                    )
 
                 if "RETURN ATTRIBUTES" in query:
                     field = bind_vars.get("field")

@@ -1,83 +1,244 @@
 {
-  "version": 1,
+  "version": 2,
   "generated_at": null,
-  "database": {},
+  "sample_value_top_k": 20,
   "collections": [
     {
       "name": "chunks",
       "type": "document",
       "count": 120000,
-      "properties": { "type": 2 },
+      "properties": {
+        "type": 2
+      },
       "indexes": [
-        { "type": "persistent", "fields": ["documentId"], "unique": false, "sparse": false, "name": "chunks_documentId" },
-        { "type": "primary", "fields": ["_key"], "unique": true, "sparse": false, "name": "primary" }
+        {
+          "type": "persistent",
+          "fields": [
+            "documentId"
+          ],
+          "unique": false,
+          "sparse": false,
+          "name": "chunks_documentId"
+        },
+        {
+          "type": "primary",
+          "fields": [
+            "_key"
+          ],
+          "unique": true,
+          "sparse": false,
+          "name": "primary"
+        }
       ],
-      "candidate_type_fields": ["type"],
+      "candidate_type_fields": [
+        "type"
+      ],
       "inferred_entity_type": "Chunk",
-      "sample_field_value_counts": { "type": [{ "value": "chunk", "count": 1 }] },
-      "observed_fields": { "fields": ["type"] }
+      "sample_field_value_counts": {
+        "type": [
+          {
+            "value": "chunk",
+            "count": 1
+          }
+        ]
+      },
+      "sample_field_distinct_counts": {
+        "type": 1
+      },
+      "observed_fields": {
+        "fields": [
+          "type"
+        ]
+      }
     },
     {
       "name": "documents",
       "type": "document",
       "count": 10000,
-      "properties": { "type": 2 },
+      "properties": {
+        "type": 2
+      },
       "indexes": [
-        { "type": "persistent", "fields": ["source"], "unique": false, "sparse": false, "name": "documents_source" },
-        { "type": "primary", "fields": ["_key"], "unique": true, "sparse": false, "name": "primary" }
+        {
+          "type": "persistent",
+          "fields": [
+            "source"
+          ],
+          "unique": false,
+          "sparse": false,
+          "name": "documents_source"
+        },
+        {
+          "type": "primary",
+          "fields": [
+            "_key"
+          ],
+          "unique": true,
+          "sparse": false,
+          "name": "primary"
+        }
       ],
       "candidate_type_fields": [],
       "inferred_entity_type": "Document",
       "sample_field_value_counts": {},
-      "observed_fields": { "fields": [] }
+      "sample_field_distinct_counts": {},
+      "observed_fields": {
+        "fields": []
+      }
     },
     {
       "name": "entities",
       "type": "document",
       "count": 500000,
-      "properties": { "type": 2 },
+      "properties": {
+        "type": 2
+      },
       "indexes": [
-        { "type": "persistent", "fields": ["name"], "unique": false, "sparse": false, "name": "entities_name" },
-        { "type": "persistent", "fields": ["type"], "unique": false, "sparse": false, "name": "entities_type" },
-        { "type": "primary", "fields": ["_key"], "unique": true, "sparse": false, "name": "primary" }
+        {
+          "type": "persistent",
+          "fields": [
+            "name"
+          ],
+          "unique": false,
+          "sparse": false,
+          "name": "entities_name"
+        },
+        {
+          "type": "persistent",
+          "fields": [
+            "type"
+          ],
+          "unique": false,
+          "sparse": false,
+          "name": "entities_type"
+        },
+        {
+          "type": "primary",
+          "fields": [
+            "_key"
+          ],
+          "unique": true,
+          "sparse": false,
+          "name": "primary"
+        }
       ],
-      "candidate_type_fields": ["type", "labels", "kind"],
+      "candidate_type_fields": [
+        "type",
+        "labels",
+        "kind"
+      ],
       "inferred_entity_type": "Entity",
       "sample_field_value_counts": {
-        "type": [{ "value": "Person", "count": 1 }],
-        "labels": [{ "value": ["Entity"], "count": 1 }],
-        "kind": [{ "value": "person", "count": 1 }]
+        "type": [
+          {
+            "value": "Person",
+            "count": 1
+          }
+        ],
+        "labels": [
+          {
+            "value": [
+              "Entity"
+            ],
+            "count": 1
+          }
+        ],
+        "kind": [
+          {
+            "value": "person",
+            "count": 1
+          }
+        ]
       },
-      "observed_fields": { "fields": ["kind", "labels", "type"] }
+      "sample_field_distinct_counts": {
+        "type": 1,
+        "labels": 1,
+        "kind": 1
+      },
+      "observed_fields": {
+        "fields": [
+          "kind",
+          "labels",
+          "type"
+        ]
+      }
     },
     {
       "name": "mentions",
       "type": "edge",
       "count": 3000000,
-      "properties": { "type": 3 },
+      "properties": {
+        "type": 3
+      },
       "indexes": [
-        { "type": "primary", "fields": ["_key"], "unique": true, "sparse": false, "name": "primary" }
+        {
+          "type": "primary",
+          "fields": [
+            "_key"
+          ],
+          "unique": true,
+          "sparse": false,
+          "name": "primary"
+        }
       ],
-      "candidate_type_fields": ["relation", "relType"],
+      "candidate_type_fields": [
+        "relation",
+        "relType"
+      ],
       "inferred_relationship_type": "MENTIONS",
       "sample_field_value_counts": {
-        "relation": [{ "value": "mentions", "count": 1 }],
-        "relType": [{ "value": "MENTIONS", "count": 1 }]
+        "relation": [
+          {
+            "value": "mentions",
+            "count": 1
+          }
+        ],
+        "relType": [
+          {
+            "value": "MENTIONS",
+            "count": 1
+          }
+        ]
       },
-      "edge_endpoints": { "from_collections": [], "to_collections": [] },
-      "observed_fields": { "fields": ["relType", "relation"] }
+      "sample_field_distinct_counts": {
+        "relation": 1,
+        "relType": 1
+      },
+      "edge_endpoints": {
+        "from_collections": [],
+        "to_collections": []
+      },
+      "observed_fields": {
+        "fields": [
+          "relType",
+          "relation"
+        ]
+      }
     }
   ],
   "graphs": [
-    { "name": "graphrag" }
+    {
+      "name": "graphrag"
+    }
   ],
+  "database": {},
   "graphs_detailed": [
     {
       "name": "graphrag",
       "edge_definitions": [
-        { "collection": "mentions", "from": ["chunks"], "to": ["entities"] }
+        {
+          "collection": "mentions",
+          "from": [
+            "chunks"
+          ],
+          "to": [
+            "entities"
+          ]
+        }
       ],
-      "orphan_collections": ["documents"]
+      "orphan_collections": [
+        "documents"
+      ]
     }
   ]
 }

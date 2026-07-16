@@ -2,7 +2,35 @@
 
 ## Unreleased
 
-(no changes)
+### Collection-per-entity strategy for pure-PG schemas
+
+- **`entity_strategy="collection"`.** Opt-in override on
+  `analyze_physical_schema` (sync + async) that skips type-discriminator
+  inference: one entity per document collection (`COLLECTION`), one
+  relationship per edge collection (`DEDICATED_COLLECTION`). Deterministic, no
+  LLM. Fixes the auto heuristic shattering a pure property-graph schema into
+  value-classes when a high-cardinality attribute (e.g. `region`) looks like a
+  type tag. Default `"auto"` unchanged.
+
+### Cypher vocabulary fidelity (docs/cypher-vocabulary-fidelity-bug-report.md)
+
+- **Raw discriminator value kept as `aliases`.** `LABEL`-style entity mappings
+  whose PascalCase name is lossy (`FIN_METRIC` → `FINMETRIC`) now carry the raw
+  type value in `physicalMapping.entities[*].aliases`, flowing through the
+  `cypher` export and `build_cypher_resolution_index`, so a Cypher author's
+  `:FIN_METRIC` resolves without downstream normalization heuristics.
+- **Transparent, configurable entity/relationship type cap.** The snapshot now
+  records each candidate discriminator field's true distinct-value total
+  (`sample_field_distinct_counts`) plus up to `SAMPLE_VALUE_OVERFLOW_K` (50)
+  beyond-top-K values (`sample_field_value_overflow`). Discriminator values
+  dropped by top-K sampling are reported in `metadata.entityTypeCaps` /
+  `relationshipTypeCaps` (collection, type field, distinct total, dropped
+  classes with counts) instead of vanishing silently. New
+  `max_entity_types` parameter on `analyze_physical_schema` (sync + async) /
+  `sample_value_top_k` on `snapshot_physical_schema` raises the cap; the
+  discriminator acceptance bound scales with it. Redaction masks the new
+  snapshot keys like their top-K counterparts. `SNAPSHOT_FORMAT_VERSION`
+  bumped to 2 (fingerprint-keyed caches recompute once).
 
 ## 0.10.0 — 2026-07-04
 

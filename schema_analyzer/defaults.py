@@ -27,6 +27,13 @@ DEFAULT_CACHE_TTL_SECONDS: int = 86_400
 
 # Snapshot
 SAMPLE_VALUE_TOP_K: int = 20
+# When a candidate discriminator field has more distinct values than the
+# top-K kept in ``sample_field_value_counts``, up to this many of the
+# next-ranked values (with counts) are preserved in
+# ``sample_field_value_overflow`` so the drop can be reported in
+# ``metadata.entityTypeCaps`` / ``relationshipTypeCaps`` instead of being
+# silent. Bounds snapshot bloat on high-cardinality candidate fields.
+SAMPLE_VALUE_OVERFLOW_K: int = 50
 
 # Cache
 DEFAULT_CACHE_DIR: str = ".schema-analyzer-cache"
@@ -249,7 +256,10 @@ GRAPHRAG_VECTOR_INDEX_TYPES: frozenset[str] = frozenset({"vector"})
 # Snapshot format
 # Bumped when the on-disk shape of snapshot_physical_schema() changes
 # in a way that fingerprint-keyed caches must invalidate.
-SNAPSHOT_FORMAT_VERSION: int = 1
+# v2: per-field distinct-value totals (``sample_field_distinct_counts``),
+# beyond-top-K overflow values (``sample_field_value_overflow``), and the
+# effective ``sample_value_top_k`` recorded on the snapshot.
+SNAPSHOT_FORMAT_VERSION: int = 2
 
 # OWL Turtle export
 # Default IRIs used by ``export_conceptual_model_as_owl_turtle``.

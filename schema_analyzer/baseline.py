@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from .conceptual import ConceptualSchema
-from .defaults import UNRESOLVED_ENDPOINT
+from .defaults import (
+    MAX_TYPE_FIELD_DISTINCT_VALUES,
+    SAMPLE_VALUE_TOP_K,
+    UNRESOLVED_ENDPOINT,
+)
 from .mapping import PhysicalMapping
 from .type_detection import (
     _pick_best_type_field,
@@ -13,8 +17,73 @@ from .type_detection import (
 from .utils import iter_edge_definitions, pascal_case
 
 
-def _choose_type_field(col: dict[str, Any], *, is_edge: bool) -> str | None:
-    return _pick_best_type_field(col, is_edge=is_edge)
+def _choose_type_field(col: dict[str, Any], *, is_edge: bool, max_distinct_values: int | None = None) -> str | None:
+    return _pick_best_type_field(col, is_edge=is_edge, max_distinct_values=max_distinct_values)
+
+
+def _snapshot_max_distinct(snapshot: dict[str, Any]) -> int:
+    """Discriminator acceptance bound for this snapshot.
+
+    Scales with the snapshot's ``sample_value_top_k`` so a caller who raised
+    the value-sampling cap (``max_entity_types``) doesn't get the field
+    rejected for exceeding the default 32-distinct-value bound.
+    """
+    top_k = snapshot.get("sample_value_top_k")
+    if not isinstance(top_k, int) or top_k <= 0:
+        top_k = SAMPLE_VALUE_TOP_K
+    return max(MAX_TYPE_FIELD_DISTINCT_VALUES, top_k)
+
+
+def type_value_caps_from_snapshot(snapshot: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Report discriminator values dropped by the snapshot's top-K sampling.
+
+    For every collection whose chosen type-discriminator field has more
+    distinct values than the snapshot captured, emit a cap record naming the
+    dropped classes (from ``sample_field_value_overflow``) and their counts —
+    so a downstream consumer sees *why* a perfectly-spelled label is absent
+    from the mapping instead of a bare ``MAPPING_NOT_FOUND``.
+
+    Returns ``(entity_caps, relationship_caps)`` — document collections feed
+    the first list, edge collections the second. Both empty when nothing was
+    dropped (the common case).
+    """
+    entity_caps: list[dict[str, Any]] = []
+    relationship_caps: list[dict[str, Any]] = []
+    collections = snapshot.get("collections") or []
+    if not isinstance(collections, list):
+        return entity_caps, relationship_caps
+    max_distinct = _snapshot_max_distinct(snapshot)
+
+    for col in collections:
+        if not isinstance(col, dict):
+            continue
+        is_edge = col.get("type") == "edge"
+        type_field = _choose_type_field(col, is_edge=is_edge, max_distinct_values=max_distinct)
+        if not type_field:
+            continue
+        captured = _iter_type_values(col, type_field)
+        distinct = (col.get("sample_field_distinct_counts") or {}).get(type_field)
+        if not isinstance(distinct, int) or distinct <= len(captured):
+            continue
+        overflow = (col.get("sample_field_value_overflow") or {}).get(type_field)
+        dropped_values = [
+            {"value": str(it["value"]), "count": it.get("count")}
+            for it in (overflow if isinstance(overflow, list) else [])
+            if isinstance(it, dict) and "value" in it
+        ]
+        cap: dict[str, Any] = {
+            "collectionName": col.get("name"),
+            "typeField": type_field,
+            "distinctValues": distinct,
+            "exported": len(captured),
+            "dropped": distinct - len(captured),
+            "droppedValues": dropped_values,
+        }
+        if distinct - len(captured) > len(dropped_values):
+            cap["droppedValuesTruncated"] = True
+        (relationship_caps if is_edge else entity_caps).append(cap)
+
+    return entity_caps, relationship_caps
 
 
 def _iter_type_values(col: dict[str, Any], field: str) -> list[str]:
@@ -246,9 +315,7 @@ def _build_property_mapping(props: list[dict[str, Any]]) -> dict[str, dict[str, 
     return mapping
 
 
-def infer_baseline_from_snapshot(
-    snapshot: dict[str, Any], *, collection_per_entity: bool = False
-) -> dict[str, Any]:
+def infer_baseline_from_snapshot(snapshot: dict[str, Any], *, collection_per_entity: bool = False) -> dict[str, Any]:
     """
     Deterministic baseline inference from a physical schema snapshot.
 
@@ -263,10 +330,19 @@ def infer_baseline_from_snapshot(
     property-graph schema (one collection per type) where the collections
     already *are* the types, so attribute fields (e.g. ``region``) must not be
     mistaken for type tags. Default (False) preserves the auto LPG/PG heuristic.
+
+    ``LABEL``-style entity mappings whose PascalCase name is lossy relative to
+    the raw discriminator value (``FIN_METRIC`` → ``FINMETRIC``) carry the raw
+    value in ``aliases`` so downstream consumers can resolve the label that
+    actually appears in the data. The returned dict also includes
+    ``entityTypeCaps`` / ``relationshipTypeCaps`` (see
+    :func:`type_value_caps_from_snapshot`) reporting discriminator values the
+    snapshot's top-K sampling dropped.
     """
     cs = ConceptualSchema.empty()
     pm = PhysicalMapping.empty()
     detected_patterns: list[str] = []
+    max_distinct = _snapshot_max_distinct(snapshot)
 
     collections = snapshot.get("collections") or []
     if not isinstance(collections, list):
@@ -288,7 +364,9 @@ def infer_baseline_from_snapshot(
 
         col_indexes = _extract_indexes_for_mapping(col)
 
-        type_field = None if collection_per_entity else _choose_type_field(col, is_edge=False)
+        type_field = (
+            None if collection_per_entity else _choose_type_field(col, is_edge=False, max_distinct_values=max_distinct)
+        )
         if type_field:
             if "LPG_LABEL" not in detected_patterns:
                 detected_patterns.append("LPG_LABEL")
@@ -302,6 +380,11 @@ def infer_baseline_from_snapshot(
                     "typeField": type_field,
                     "typeValue": raw,
                 }
+                # PascalCase collapses separators (FIN_METRIC → FINMETRIC),
+                # so the raw discriminator value — the label a Cypher author
+                # actually sees in the data — is kept as an accepted alias.
+                if raw != ent_name:
+                    ent_mapping["aliases"] = [raw]
                 if col_indexes:
                     ent_mapping["indexes"] = col_indexes
                 prop_map = _build_property_mapping(props)
@@ -340,7 +423,9 @@ def infer_baseline_from_snapshot(
 
         edge_indexes = _extract_indexes_for_mapping(col)
 
-        type_field = None if collection_per_entity else _choose_type_field(col, is_edge=True)
+        type_field = (
+            None if collection_per_entity else _choose_type_field(col, is_edge=True, max_distinct_values=max_distinct)
+        )
         if type_field:
             if "LPG_GENERIC_EDGE" not in detected_patterns:
                 detected_patterns.append("LPG_GENERIC_EDGE")
@@ -402,10 +487,17 @@ def infer_baseline_from_snapshot(
                 rel_mapping["properties"] = prop_map
             pm.relationships[rel_type] = rel_mapping
 
+    entity_caps: list[dict[str, Any]] = []
+    relationship_caps: list[dict[str, Any]] = []
+    if not collection_per_entity:
+        entity_caps, relationship_caps = type_value_caps_from_snapshot(snapshot)
+
     return {
         "conceptualSchema": cs.to_json(),
         "physicalMapping": pm.to_json(),
         "detectedPatterns": detected_patterns,
+        "entityTypeCaps": entity_caps,
+        "relationshipTypeCaps": relationship_caps,
     }
 
 

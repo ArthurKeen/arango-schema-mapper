@@ -20,7 +20,8 @@ Three independent, composable modes are supported:
   values) with opaque tokens while preserving field names, distinct-value
   counts, and structure. A single snapshot-wide value→token map is used so the
   same value masks to the same token everywhere it appears:
-  ``sample_field_value_counts`` values, ``observed_fields.by_type`` keys, and
+  ``sample_field_value_counts`` / ``sample_field_value_overflow`` values,
+  ``observed_fields.by_type`` keys, and
   ``edge_endpoints.entity_types_by_relation`` (relation keys + resolved
   endpoint entity-type lists). Type values resolved purely from collection names
   (Property-Graph endpoints) are left intact because they are not field data.
@@ -28,7 +29,8 @@ Three independent, composable modes are supported:
   ``redacted_field_N`` tokens before egress, then **round-trip** them back to the
   real names in the LLM output. A single snapshot-wide name→token map masks
   every field-name occurrence (``candidate_type_fields``,
-  ``sample_field_value_counts`` keys, ``observed_fields.fields`` /
+  ``sample_field_value_counts`` / ``sample_field_value_overflow`` /
+  ``sample_field_distinct_counts`` keys, ``observed_fields.fields`` /
   ``by_type`` value lists, ``indexes[*].fields``, and sample-document keys),
   excluding ArangoDB system fields (``_key`` / ``_from`` / ``_to`` / …). The
   caller (:class:`AgenticSchemaAnalyzer`) applies the map to the prompt snapshot
@@ -90,13 +92,14 @@ def _collect_sensitive_values(collections: list[Any]) -> dict[str, str]:
     for entry in collections:
         if not isinstance(entry, dict):
             continue
-        svc = entry.get("sample_field_value_counts")
-        if isinstance(svc, dict):
-            for items in svc.values():
-                if isinstance(items, list):
-                    for item in items:
-                        if isinstance(item, dict) and "value" in item:
-                            values.add(str(item["value"]))
+        for svc_key in ("sample_field_value_counts", "sample_field_value_overflow"):
+            svc = entry.get(svc_key)
+            if isinstance(svc, dict):
+                for items in svc.values():
+                    if isinstance(items, list):
+                        for item in items:
+                            if isinstance(item, dict) and "value" in item:
+                                values.add(str(item["value"]))
         observed = entry.get("observed_fields")
         if isinstance(observed, dict) and isinstance(observed.get("by_type"), dict):
             values.update(str(k) for k in observed["by_type"])
@@ -164,10 +167,15 @@ def build_field_name_map(collections: list[Any]) -> dict[str, str]:
             continue
         for f in entry.get("candidate_type_fields") or []:
             _add(f)
-        svc = entry.get("sample_field_value_counts")
-        if isinstance(svc, dict):
-            for k in svc:
-                _add(k)
+        for svc_key in (
+            "sample_field_value_counts",
+            "sample_field_value_overflow",
+            "sample_field_distinct_counts",
+        ):
+            svc = entry.get(svc_key)
+            if isinstance(svc, dict):
+                for k in svc:
+                    _add(k)
         observed = entry.get("observed_fields")
         if isinstance(observed, dict):
             for f in observed.get("fields") or []:
@@ -204,9 +212,14 @@ def _mask_field_names_in_entry(entry: dict[str, Any], name_map: dict[str, str]) 
     if isinstance(ctf, list):
         entry["candidate_type_fields"] = [_mask_name(f, name_map) for f in ctf]
 
-    svc = entry.get("sample_field_value_counts")
-    if isinstance(svc, dict):
-        entry["sample_field_value_counts"] = {_mask_name(k, name_map): v for k, v in svc.items()}
+    for svc_key in (
+        "sample_field_value_counts",
+        "sample_field_value_overflow",
+        "sample_field_distinct_counts",
+    ):
+        svc = entry.get(svc_key)
+        if isinstance(svc, dict):
+            entry[svc_key] = {_mask_name(k, name_map): v for k, v in svc.items()}
 
     observed = entry.get("observed_fields")
     if isinstance(observed, dict):
@@ -291,9 +304,10 @@ def redact_snapshot_for_egress(
             for key in _SAMPLE_KEYS:
                 entry.pop(key, None)
         if options.mask_field_values:
-            svc = entry.get("sample_field_value_counts")
-            if isinstance(svc, dict):
-                entry["sample_field_value_counts"] = _mask_value_counts(svc, token_map)
+            for svc_key in ("sample_field_value_counts", "sample_field_value_overflow"):
+                svc = entry.get(svc_key)
+                if isinstance(svc, dict):
+                    entry[svc_key] = _mask_value_counts(svc, token_map)
             observed = entry.get("observed_fields")
             if isinstance(observed, dict):
                 _mask_observed_fields(observed, token_map)

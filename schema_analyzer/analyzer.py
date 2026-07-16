@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from arango.database import StandardDatabase
 
-from .baseline import infer_baseline_from_snapshot
+from .baseline import infer_baseline_from_snapshot, type_value_caps_from_snapshot
 from .cache import AnalysisCache, cache_from_config
 from .conceptual import ConceptualSchema
 from .defaults import (
@@ -296,6 +296,7 @@ class AgenticSchemaAnalyzer:
         use_cache: bool = True,
         graph_scope: str | None = None,
         entity_strategy: Literal["auto", "collection"] = "auto",
+        max_entity_types: int | None = None,
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult | _AnalysisContext:
         """Shared setup for sync and async analysis paths.
@@ -310,6 +311,7 @@ class AgenticSchemaAnalyzer:
             sample_limit_per_collection=sample_limit_per_collection,
             include_samples_in_snapshot=include_samples_in_snapshot,
             graph_scope=graph_scope,
+            sample_value_top_k=max_entity_types,
         )
         snapshot["generated_at"] = now_iso()
         fingerprint = fingerprint_physical_schema(snapshot, include_samples=False)
@@ -355,9 +357,7 @@ class AgenticSchemaAnalyzer:
             logger.info("No LLM provider configured; falling back to baseline inference")
             doc_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "document")
             edge_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "edge")
-            baseline = infer_baseline_from_snapshot(
-                snapshot, collection_per_entity=entity_strategy == "collection"
-            )
+            baseline = infer_baseline_from_snapshot(snapshot, collection_per_entity=entity_strategy == "collection")
             stats_holder: dict[str, Any] = {
                 "physicalMapping": baseline.get("physicalMapping", {}),
                 "conceptualSchema": baseline.get("conceptualSchema", {}),
@@ -389,6 +389,8 @@ class AgenticSchemaAnalyzer:
                 timestamp=now_iso(),
                 analyzed_collection_counts={"documentCollections": doc_count, "edgeCollections": edge_count},
                 detected_patterns=baseline.get("detectedPatterns", []),
+                entity_type_caps=baseline.get("entityTypeCaps") or None,
+                relationship_type_caps=baseline.get("relationshipTypeCaps") or None,
                 warnings=["LLM provider not configured; returning deterministic baseline inference"],
                 assumptions=[],
                 review_required=True,
@@ -469,6 +471,7 @@ class AgenticSchemaAnalyzer:
         use_cache: bool = True,
         graph_scope: str | None = None,
         entity_strategy: Literal["auto", "collection"] = "auto",
+        max_entity_types: int | None = None,
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult:
         prov = _ProvenanceStamp(run_id=str(uuid.uuid4()), started_at=now_iso())
@@ -481,6 +484,7 @@ class AgenticSchemaAnalyzer:
             use_cache=use_cache,
             graph_scope=graph_scope,
             entity_strategy=entity_strategy,
+            max_entity_types=max_entity_types,
             _snapshot=_snapshot,
         )
         if isinstance(prep, AnalysisResult):
@@ -542,6 +546,7 @@ class AgenticSchemaAnalyzer:
             use_cache=use_cache,
             prov=prov,
             domain_hint=prep.domain_hint,
+            entity_strategy=prep.entity_strategy,
         )
 
     def analyze_incremental(
@@ -608,6 +613,7 @@ class AgenticSchemaAnalyzer:
         use_cache: bool = True,
         graph_scope: str | None = None,
         entity_strategy: Literal["auto", "collection"] = "auto",
+        max_entity_types: int | None = None,
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult:
         """Async version of analyze_physical_schema. Requires provider with agenerate()."""
@@ -621,6 +627,7 @@ class AgenticSchemaAnalyzer:
             use_cache=use_cache,
             graph_scope=graph_scope,
             entity_strategy=entity_strategy,
+            max_entity_types=max_entity_types,
             _snapshot=_snapshot,
         )
         if isinstance(prep, AnalysisResult):
@@ -682,6 +689,7 @@ class AgenticSchemaAnalyzer:
             use_cache=use_cache,
             prov=prov,
             domain_hint=prep.domain_hint,
+            entity_strategy=prep.entity_strategy,
         )
 
     def _build_result(
@@ -698,9 +706,19 @@ class AgenticSchemaAnalyzer:
         use_cache: bool,
         prov: _ProvenanceStamp,
         domain_hint: DomainHint | None = None,
+        entity_strategy: str = "auto",
     ) -> AnalysisResult:
         doc_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "document")
         edge_count = sum(1 for c in snapshot.get("collections", []) if c.get("type") == "edge")
+
+        # The LLM only ever saw the top-K discriminator values the snapshot
+        # sampled, so value drops apply to this path as much as to baseline
+        # inference. Not applicable under entity_strategy="collection"
+        # (discriminators are not used at all).
+        entity_type_caps: list[dict[str, Any]] = []
+        relationship_type_caps: list[dict[str, Any]] = []
+        if entity_strategy != "collection":
+            entity_type_caps, relationship_type_caps = type_value_caps_from_snapshot(snapshot)
 
         if errors:
             confidence = 0.0
@@ -742,6 +760,8 @@ class AgenticSchemaAnalyzer:
             reconciliation=data.get("metadata", {}).get("reconciliation")
             if isinstance(data.get("metadata"), dict)
             else None,
+            entity_type_caps=entity_type_caps or None,
+            relationship_type_caps=relationship_type_caps or None,
             statistics=data.get("metadata", {}).get("statistics") if isinstance(data.get("metadata"), dict) else None,
             statistics_status=data.get("metadata", {}).get("statistics_status")
             if isinstance(data.get("metadata"), dict)

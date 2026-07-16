@@ -10,7 +10,7 @@ resolution (`MappingResolver` normalization), which recovered 17 of 19 failing q
 issues here are the *root causes* and one of them (#2, the cap) cannot be worked around downstream
 because the affected label is **absent** from the mapping entirely.
 **Severity:** Medium–High for the "acquire a mapping, run existing Cypher" use case.
-**Status:** OPEN
+**Status:** FIXED (unreleased — see Resolution below and CHANGELOG "Unreleased")
 
 ---
 
@@ -109,3 +109,32 @@ labels = set(export["physicalMapping"]["entities"])
 assert "FINMETRIC" in labels and "FIN_METRIC" not in labels   # #1: lossy rename
 assert "ORG_REG" not in labels                                # #2: dropped by top-20 cap
 ```
+
+---
+
+## Resolution
+
+Both fixes landed (regression-tested in `tests/test_vocabulary_fidelity.py`):
+
+1. **Label fidelity (#1).** `LABEL`-style entity mappings whose PascalCase
+   name is lossy relative to the raw discriminator value now carry the raw
+   value as an alias — `physicalMapping.entities.FINMETRIC.aliases ==
+   ["FIN_METRIC"]` (`baseline.py`). The `aliases` key is copied into the
+   transpiler-facing blocks of the `cypher` export and
+   `build_cypher_resolution_index` (`exports.py::_ENTITY_RESOLUTION_KEYS`),
+   so `:FIN_METRIC` resolves exactly without the downstream normalization
+   heuristic.
+2. **Configurable + transparent entity cap (#2).** The snapshot records each
+   candidate field's true distinct total (`sample_field_distinct_counts`) and
+   up to 50 beyond-top-K values with counts (`sample_field_value_overflow`,
+   `defaults.SAMPLE_VALUE_OVERFLOW_K`). Dropped discriminator values are
+   reported per collection in `metadata.entityTypeCaps` /
+   `relationshipTypeCaps` (`{collectionName, typeField, distinctValues,
+   exported, dropped, droppedValues[], droppedValuesTruncated?}`) on both the
+   baseline and LLM paths — so `ORG_REG` (rank ~24, count ~11 K) now appears
+   in `entityTypeCaps[0].droppedValues` instead of vanishing. The cap is
+   raisable via `analyze_physical_schema(max_entity_types=...)` /
+   `snapshot_physical_schema(sample_value_top_k=...)`; the discriminator
+   acceptance bound (`MAX_TYPE_FIELD_DISTINCT_VALUES`, 32) scales up with the
+   requested cap so e.g. `max_entity_types=50` exports all 24 FinReflectKG
+   classes rather than rejecting the field.

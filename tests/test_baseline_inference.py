@@ -629,9 +629,7 @@ def test_auto_strategy_misfires_on_pg_attribute():
 
 
 def test_collection_strategy_forces_one_entity_per_collection():
-    out = infer_baseline_from_snapshot(
-        _pg_attribute_misfire_snapshot(), collection_per_entity=True
-    )
+    out = infer_baseline_from_snapshot(_pg_attribute_misfire_snapshot(), collection_per_entity=True)
     ents = out["conceptualSchema"]["entities"]
     assert len(ents) == 1
     pm_ent = next(iter(out["physicalMapping"]["entities"].values()))

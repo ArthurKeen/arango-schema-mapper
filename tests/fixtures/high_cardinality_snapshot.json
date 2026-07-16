@@ -1,7 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "generated_at": null,
-  "database": {},
+  "sample_value_top_k": 20,
   "collections": [
     {
       "name": "entities",
@@ -65,6 +65,11 @@
             "count": 1
           }
         ]
+      },
+      "sample_field_distinct_counts": {
+        "type": 1,
+        "kind": 1,
+        "entityType": 1
       },
       "observed_fields": {
         "fields": [
@@ -136,6 +141,11 @@
           }
         ]
       },
+      "sample_field_distinct_counts": {
+        "type": 1,
+        "relation": 1,
+        "relType": 1
+      },
       "edge_endpoints": {
         "from_collections": [],
         "to_collections": [],
@@ -156,6 +166,7 @@
       "name": "hybrid"
     }
   ],
+  "database": {},
   "graphs_detailed": [
     {
       "name": "hybrid",

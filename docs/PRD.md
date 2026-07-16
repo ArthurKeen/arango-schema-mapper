@@ -71,7 +71,16 @@ The system must produce a **conceptual → physical mapping** describing how eac
 | `DEDICATED_COLLECTION` | Relationship | One edge collection per relationship type |
 | `GENERIC_WITH_TYPE` | Relationship | Shared edge collection filtered by `typeField == typeValue` |
 
-**Implementation**: `PhysicalMapping` dataclass in `mapping.py`, with `aql_entity_match()` and `aql_relationship_traversal()` helper methods that produce injection-safe AQL fragments.
+`LABEL`-style entity mappings must be **label-faithful**: when the PascalCase
+entity name is lossy relative to the raw discriminator value that appears in
+the data (`FIN_METRIC` → `FINMETRIC`), the raw value is recorded in the
+mapping's `aliases` list and copied into the transpiler-facing blocks of the
+`cypher` export and `build_cypher_resolution_index`, so a query author who
+writes the real data value resolves the entity without downstream
+normalization heuristics (see
+`docs/cypher-vocabulary-fidelity-bug-report.md` issue #1).
+
+**Implementation**: `PhysicalMapping` dataclass in `mapping.py`, with `aql_entity_match()` and `aql_relationship_traversal()` helper methods that produce injection-safe AQL fragments; alias derivation in `baseline.py` (LABEL branch of `infer_baseline_from_snapshot`), export propagation via `exports.py::_ENTITY_RESOLUTION_KEYS`.
 
 #### **3.4. Hybrid Pattern Detection**
 
@@ -81,6 +90,23 @@ The system must automatically detect and classify physical schema patterns:
 - **LPG (Labeled Property Graph):** Generic node/edge collections with discriminator fields (`type`, `kind`, `label`, `relation`, `relType`) → `LABEL` / `GENERIC_WITH_TYPE` mapping.
 
 Detection uses candidate type field analysis from `sample_field_value_counts` in the snapshot.
+
+The per-field distinct-value sampling behind detection is capped
+(`SAMPLE_VALUE_TOP_K`, default 20) and that cap must be **configurable and
+transparent** (see `docs/cypher-vocabulary-fidelity-bug-report.md` issue #2):
+
+- The snapshot records each candidate field's true distinct total
+  (`sample_field_distinct_counts`) and up to `SAMPLE_VALUE_OVERFLOW_K` (50)
+  beyond-top-K values with counts (`sample_field_value_overflow`).
+- Discriminator values dropped by the cap are reported in
+  `metadata.entityTypeCaps` / `relationshipTypeCaps` — per collection: type
+  field, distinct total, exported/dropped counts, and the dropped classes
+  with counts — on both the baseline and LLM analysis paths, never silently.
+- Callers can raise the cap via `analyze_physical_schema(max_entity_types=…)`
+  (sync + async) / `snapshot_physical_schema(sample_value_top_k=…)`; the
+  discriminator acceptance bound (`MAX_TYPE_FIELD_DISTINCT_VALUES`) scales
+  with the raised cap. LLM-egress redaction masks the new snapshot keys the
+  same way as their top-K counterparts.
 
 The automatic discriminator heuristic must be **overridable**: on a pure-PG schema
 (one collection per type) whose collections carry a plausible-looking but
