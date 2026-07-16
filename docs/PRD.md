@@ -118,7 +118,7 @@ collection (`COLLECTION`) and one relationship per edge collection
 (`DEDICATED_COLLECTION`), deterministically and without LLM involvement. The
 default `entity_strategy="auto"` preserves the detection behavior above.
 
-**Implementation**: Baseline heuristic inference in `baseline.py` (`infer_baseline_from_snapshot()`); `entity_strategy` override in `analyzer.py` (`analyze_physical_schema`, threaded via `_prepare_analysis` to `infer_baseline_from_snapshot(collection_per_entity=…)`) and `baseline.py:250` (`collection_per_entity` parameter, discriminator skip at `baseline.py:291` / `baseline.py:343`).
+**Implementation**: Baseline heuristic inference in `baseline.py` (`infer_baseline_from_snapshot()`); `entity_strategy` override in `analyzer.py` (`analyze_physical_schema`, threaded via `_prepare_analysis` to `infer_baseline_from_snapshot(collection_per_entity=…)`, which skips discriminator selection in its entity and relationship branches); cap sampling/reporting in `snapshot.py` (`_detect_type_fields_via_collect`) and `baseline.py` (`type_value_caps_from_snapshot`).
 
 #### **3.5. Agentic Semantic Enrichment (LLM)**
 
