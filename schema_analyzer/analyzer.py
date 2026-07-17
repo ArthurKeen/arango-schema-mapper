@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import time
@@ -596,11 +597,11 @@ class AgenticSchemaAnalyzer:
             return refresh_statistics(db, pr)
 
         # unchanged — the fingerprint match just revalidated every element.
+        # Stamp copies so the caller's ``prior`` is never mutated in place.
         completed = now_iso()
-        stamp_temporal_provenance(
-            {"conceptualSchema": pr.conceptual_schema, "physicalMapping": pr.physical_mapping},
-            now=completed,
-        )
+        conceptual = copy.deepcopy(pr.conceptual_schema)
+        physical = copy.deepcopy(pr.physical_mapping)
+        stamp_temporal_provenance({"conceptualSchema": conceptual, "physicalMapping": physical}, now=completed)
         meta = pr.metadata.model_copy(
             update={
                 "incremental_refresh": "unchanged",
@@ -609,8 +610,8 @@ class AgenticSchemaAnalyzer:
             }
         )
         return AnalysisResult(
-            conceptual_schema=pr.conceptual_schema,
-            physical_mapping=pr.physical_mapping,
+            conceptual_schema=conceptual,
+            physical_mapping=physical,
             metadata=meta,
         )
 

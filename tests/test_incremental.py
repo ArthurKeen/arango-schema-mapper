@@ -186,3 +186,19 @@ def test_incremental_shape_changed_carries_first_seen_forward():
     new_names = set(res.physical_mapping["entities"]) - set(prior.physical_mapping["entities"])
     for name in new_names:
         assert res.physical_mapping["entities"][name]["firstSeenAt"] >= first_seen
+
+
+def test_incremental_does_not_mutate_prior_timestamps():
+    # Revalidation must stamp the RETURNED result, never the caller's prior
+    # (regression: earlier the unchanged/stats_only branches mutated prior in place).
+    db = _FakeDB()
+    prior = _prior_result(db)
+    ent_key = next(iter(prior.physical_mapping["entities"]))
+    prior_last_validated = prior.physical_mapping["entities"][ent_key]["lastValidatedAt"]
+
+    res = AgenticSchemaAnalyzer().analyze_incremental(db, prior=prior, use_cache=False)
+    # prior untouched...
+    assert prior.physical_mapping["entities"][ent_key]["lastValidatedAt"] == prior_last_validated
+    # ...result carries a (re)stamp and owns its own dict
+    assert res.physical_mapping is not prior.physical_mapping
+    assert isinstance(res.physical_mapping["entities"][ent_key]["lastValidatedAt"], str)

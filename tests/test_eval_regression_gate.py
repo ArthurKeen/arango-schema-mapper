@@ -9,14 +9,17 @@ from pathlib import Path
 from schema_analyzer.eval import report_regressions
 
 
-def _run_entry(domain: str, variant: str, *, ent_f1=0.8, rel_f1=0.7, dr_f1=0.6, map_acc=1.0, conf=0.1):
+def _run_entry(domain: str, variant: str, *, ent_f1=0.8, rel_f1=0.7, dr_f1=0.6, map_acc=1.0, map_acc_ent=1.0, conf=0.1):
     return {
         "domain": domain,
         "variant": variant,
         "confidence": conf,
         "score": {"entities": {"f1": ent_f1}, "relationships": {"f1": rel_f1}},
         "domain_range": {"f1": dr_f1},
-        "mapping_style": {"relationships": {"accuracy": map_acc}},
+        "mapping_style": {
+            "entities": {"accuracy": map_acc_ent},
+            "relationships": {"accuracy": map_acc},
+        },
     }
 
 
@@ -82,3 +85,27 @@ def test_legacy_bare_list_reports_accepted(tmp_path: Path):
     cur.write_text(json.dumps(runs), "utf-8")  # legacy shape: bare list
     base = _write(tmp_path, "base.json", runs)
     assert report_regressions(cur, base) == []
+
+
+def test_entity_mapping_style_accuracy_is_gated(tmp_path: Path):
+    # An entity-style regression (e.g. LABEL/COLLECTION flip) must fail the gate,
+    # not just relationship-style. The alias / entity_strategy work touches
+    # exactly this metric.
+    base = _write(tmp_path, "base.json", [_run_entry("healthcare", "collection_dedicated", map_acc_ent=1.0)])
+    cur = _write(tmp_path, "cur.json", [_run_entry("healthcare", "collection_dedicated", map_acc_ent=0.5)])
+    regs = report_regressions(cur, base)
+    assert len(regs) == 1
+    assert "map_acc_ent" in regs[0]
+
+
+def test_duplicate_domain_variant_keys_do_not_crash(tmp_path: Path):
+    # report_regressions is public API; a malformed report with duplicate
+    # (domain, variant) keys must not raise TypeError on the sort.
+    runs = [
+        _run_entry("healthcare", "collection_dedicated"),
+        _run_entry("healthcare", "collection_dedicated", rel_f1=0.1),
+    ]
+    cur = _write(tmp_path, "cur.json", runs)
+    base = _write(tmp_path, "base.json", runs)
+    # Should return without raising (result content is unspecified for dup keys).
+    report_regressions(cur, base)

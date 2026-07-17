@@ -21,6 +21,7 @@ detection, and sampling — exactly the work §3.13.3 says to avoid.
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -126,11 +127,11 @@ def refresh_statistics(db: StandardDatabase, prior: AnalysisResult | dict[str, A
 
     completed = now_iso()
     # Shape fingerprint matched, so the preserved conceptual schema + mapping
-    # were just revalidated against the live database (PRD §3.13.2).
-    stamp_temporal_provenance(
-        {"conceptualSchema": pr.conceptual_schema, "physicalMapping": pr.physical_mapping},
-        now=completed,
-    )
+    # were just revalidated against the live database (PRD §3.13.2). Stamp
+    # copies so the caller's ``prior`` is never mutated in place.
+    conceptual = copy.deepcopy(pr.conceptual_schema)
+    physical = copy.deepcopy(pr.physical_mapping)
+    stamp_temporal_provenance({"conceptualSchema": conceptual, "physicalMapping": physical}, now=completed)
     update: dict[str, Any] = {
         "analysis_completed_at": completed,
         "counts_fingerprint": fingerprint_physical_counts(db),
@@ -144,7 +145,7 @@ def refresh_statistics(db: StandardDatabase, prior: AnalysisResult | dict[str, A
         update["statistics_status"] = STATISTICS_STATUS_SKIPPED_NO_DB
 
     return AnalysisResult(
-        conceptual_schema=pr.conceptual_schema,
-        physical_mapping=pr.physical_mapping,
+        conceptual_schema=conceptual,
+        physical_mapping=physical,
         metadata=pr.metadata.model_copy(update=update),
     )

@@ -161,7 +161,8 @@ _GATED_METRICS = (
     ("ent_f1", lambda e: e["score"]["entities"]["f1"]),
     ("rel_f1", lambda e: e["score"]["relationships"]["f1"]),
     ("dr_f1", lambda e: e["domain_range"]["f1"]),
-    ("map_acc", lambda e: e["mapping_style"]["relationships"]["accuracy"]),
+    ("map_acc_ent", lambda e: e["mapping_style"]["entities"]["accuracy"]),
+    ("map_acc_rel", lambda e: e["mapping_style"]["relationships"]["accuracy"]),
 )
 
 
@@ -187,7 +188,7 @@ def report_regressions(
     cur_index = {f"{e['domain']}|{e['variant']}": e for e in cur}
     regressions: list[str] = []
 
-    for key, prev in sorted((f"{e['domain']}|{e['variant']}", e) for e in base):
+    for key, prev in sorted(((f"{e['domain']}|{e['variant']}", e) for e in base), key=lambda t: t[0]):
         entry = cur_index.get(key)
         if entry is None:
             regressions.append(f"{key}: present in baseline but missing from current report")
