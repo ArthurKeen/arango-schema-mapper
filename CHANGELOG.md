@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+(no changes)
+
+## 0.11.0 — 2026-07-17
+
 ### PRD drift closure (5 gaps from 2026-07-16 prd-sync)
 
 - **Temporal element provenance (PRD §3.13.2).** Every conceptual
