@@ -263,6 +263,10 @@ Inspired by **AOE** (`ontology_generator`): multi-signal confidence, structural 
 **Requirements (acceptance for “metrics complete” milestones):**
 
 - Eval metrics remain the **regression gate** for releases (CI compares reports to baselines).
+  _Shipped:_ the Integration workflow runs the deterministic no-LLM eval and fails on any gated
+  quality-metric drop vs the committed `eval/baselines/ci_no_llm_baseline.json`
+  (`schema-analyzer eval --fail-on-regression`, backed by `eval.report_regressions`;
+  confidence deltas are advisory, not gated).
 - Any new composite score must document **inputs, formula, and failure modes** (e.g. empty relationship set).
 - Production metrics must not require sending full snapshots to third parties unless explicitly configured.
 
@@ -294,6 +298,13 @@ Inspired by **AOE** (`ontology_generator`): multi-signal confidence, structural 
 |---|---|
 | Conceptual entities / relationships | Optional fields: `firstSeenAt`, `lastValidatedAt`, `source` (`baseline` \| `llm` \| `human`) |
 | Mapping entries | Same lineage fields where useful for auditing COLLECTION vs LABEL decisions |
+
+> Status: fully shipped. ``source`` tags via ``provenance.annotate_provenance``;
+> ``firstSeenAt`` / ``lastValidatedAt`` via ``provenance.stamp_temporal_provenance``
+> (stamped on every fresh analysis, restamped as revalidation by the incremental
+> ``unchanged`` / ``stats_only`` branches) and ``provenance.carry_forward_first_seen``
+> (``analyze_incremental`` full re-analysis carries ``firstSeenAt`` forward for
+> elements that survived the schema change).
 
 **3.13.3. Change detection and diff (target)**
 
@@ -332,7 +343,7 @@ Full **edge-interval time travel** for every conceptual entity (AOE-style `creat
 - Configurable TTL (default 86400s / 24h).
 - `generated_at` timestamp excluded from fingerprint for stability.
 
-**Implementation**: `cache.py` (`AnalysisCache` / `FilesystemCache`). Alternate backends, if any, live alongside.
+**Implementation**: `cache.py` (`AnalysisCache` / `FilesystemCache` with `get` / `set` / `invalidate`; `_cache.cache_schema_version` stamped from `defaults.CACHE_SCHEMA_VERSION` on write and refuse-and-discarded on version mismatch — including legacy unversioned entries — at load). Alternate backends, if any, live alongside.
 
 #### **4.2. Determinism**
 

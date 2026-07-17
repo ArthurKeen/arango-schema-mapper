@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from .provenance import stamp_temporal_provenance
 from .snapshot import fingerprint_physical_counts, fingerprint_physical_shape
 from .statistics import STATISTICS_STATUS_SKIPPED_NO_DB, compute_statistics
 from .types import AnalysisMetadata, AnalysisResult, now_iso
@@ -123,8 +124,15 @@ def refresh_statistics(db: StandardDatabase, prior: AnalysisResult | dict[str, A
         logger.warning("stats-only refresh failed to compute statistics: %s", exc)
         stats = None
 
+    completed = now_iso()
+    # Shape fingerprint matched, so the preserved conceptual schema + mapping
+    # were just revalidated against the live database (PRD §3.13.2).
+    stamp_temporal_provenance(
+        {"conceptualSchema": pr.conceptual_schema, "physicalMapping": pr.physical_mapping},
+        now=completed,
+    )
     update: dict[str, Any] = {
-        "analysis_completed_at": now_iso(),
+        "analysis_completed_at": completed,
         "counts_fingerprint": fingerprint_physical_counts(db),
         "incremental_refresh": "stats_only",
         "cache_hit": False,

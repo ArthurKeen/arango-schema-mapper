@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .defaults import CACHE_ROOT_ENV_VAR, DEFAULT_CACHE_DIR
+from .defaults import CACHE_ROOT_ENV_VAR, CACHE_SCHEMA_VERSION, DEFAULT_CACHE_DIR
 from .errors import SchemaAnalyzerError
 from .utils import stable_dumps
 
@@ -20,6 +20,10 @@ class AnalysisCache:
         raise NotImplementedError
 
     def set(self, fingerprint: str, value: dict[str, Any], *, ttl_seconds: int) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    def invalidate(self, fingerprint: str) -> None:  # pragma: no cover
+        """Remove a single entry. Missing entries are a no-op (PRD §4.1)."""
         raise NotImplementedError
 
 
@@ -46,6 +50,18 @@ class FilesystemCache(AnalysisCache):
             logger.warning("Cache entry at %s is not a JSON object, treating as miss", p)
             return None
         cache_meta = raw.get("_cache", {})
+        # Refuse-and-discard entries written under a different cache payload
+        # schema (PRD §4.1). Entries predating versioning carry no
+        # cache_schema_version and are likewise discarded.
+        if cache_meta.get("cache_schema_version") != CACHE_SCHEMA_VERSION:
+            logger.debug(
+                "Cache entry %s has cache_schema_version=%r (want %d), discarding",
+                fingerprint,
+                cache_meta.get("cache_schema_version"),
+                CACHE_SCHEMA_VERSION,
+            )
+            self.invalidate(fingerprint)
+            return None
         generated_at = cache_meta.get("generated_at")
         ttl = cache_meta.get("ttl_seconds")
         if generated_at and ttl is not None:
@@ -61,7 +77,11 @@ class FilesystemCache(AnalysisCache):
     def set(self, fingerprint: str, value: dict[str, Any], *, ttl_seconds: int) -> None:
         p = self._path(fingerprint)
         payload = dict(value)
-        payload["_cache"] = {"ttl_seconds": int(ttl_seconds), "generated_at": time.time()}
+        payload["_cache"] = {
+            "ttl_seconds": int(ttl_seconds),
+            "generated_at": time.time(),
+            "cache_schema_version": CACHE_SCHEMA_VERSION,
+        }
         try:
             p.write_text(stable_dumps(payload), "utf-8")
             # Restrict to owner-only on POSIX hosts so cached schema
@@ -75,6 +95,12 @@ class FilesystemCache(AnalysisCache):
                     logger.debug("Could not chmod 0o600 on cache file %s", p, exc_info=True)
         except Exception:
             logger.warning("Failed to write cache entry at %s", p, exc_info=True)
+
+    def invalidate(self, fingerprint: str) -> None:
+        try:
+            self._path(fingerprint).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to invalidate cache entry %s", fingerprint, exc_info=True)
 
 
 def _resolve_cache_directory(directory: str) -> Path:

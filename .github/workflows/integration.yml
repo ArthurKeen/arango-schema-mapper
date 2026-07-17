@@ -48,6 +48,22 @@ jobs:
         run: |
           pytest -q -m integration
 
+      # PRD §3.12.3 regression gate: run the deterministic no-LLM eval and
+      # fail the build if any gated quality metric drops vs the committed
+      # baseline. Regenerate the baseline with the same command (pointing
+      # --report at eval/baselines/ci_no_llm_baseline.json) when an
+      # intentional inference change shifts the scores.
+      - name: Eval regression gate (no-LLM baseline compare)
+        env:
+          ARANGO_URL: "http://localhost:18529"
+          ARANGO_USER: "root"
+          ARANGO_PASS: "openSesame"
+        run: |
+          python -m schema_analyzer.cli eval \
+            --report eval_report_ci.json \
+            --baseline eval/baselines/ci_no_llm_baseline.json \
+            --fail-on-regression
+
       - name: Stop ArangoDB
         if: always()
         run: |

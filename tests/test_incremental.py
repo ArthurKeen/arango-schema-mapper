@@ -150,3 +150,39 @@ def test_incremental_no_prior_is_full_analysis():
     res = AgenticSchemaAnalyzer().analyze_incremental(db, use_cache=False)
     assert res.metadata.incremental_refresh is None
     assert res.metadata.shape_fingerprint is not None
+
+
+# ── Temporal lineage across incremental branches (PRD §3.13.2) ───────────
+
+
+def test_full_analysis_stamps_first_seen_and_last_validated():
+    db = _FakeDB()
+    res = AgenticSchemaAnalyzer().analyze_physical_schema(db, use_cache=False)
+    ent = next(iter(res.physical_mapping["entities"].values()))
+    assert isinstance(ent.get("firstSeenAt"), str)
+    assert ent["lastValidatedAt"] == ent["firstSeenAt"]
+
+
+def test_incremental_unchanged_revalidates_but_keeps_first_seen():
+    db = _FakeDB()
+    prior = _prior_result(db)
+    ent0 = next(iter(prior.physical_mapping["entities"].values()))
+    first_seen = ent0["firstSeenAt"]
+    res = AgenticSchemaAnalyzer().analyze_incremental(db, prior=prior, use_cache=False)
+    ent = next(iter(res.physical_mapping["entities"].values()))
+    assert ent["firstSeenAt"] == first_seen
+    assert isinstance(ent.get("lastValidatedAt"), str)
+    assert ent["lastValidatedAt"] >= first_seen
+
+
+def test_incremental_shape_changed_carries_first_seen_forward():
+    db = _FakeDB()
+    prior = _prior_result(db)
+    surviving = next(iter(prior.physical_mapping["entities"]))
+    first_seen = prior.physical_mapping["entities"][surviving]["firstSeenAt"]
+    db._cols["orgs"] = _Col(2, count=1)  # shape change -> full re-analysis
+    res = AgenticSchemaAnalyzer().analyze_incremental(db, prior=prior, use_cache=False)
+    assert res.physical_mapping["entities"][surviving]["firstSeenAt"] == first_seen
+    new_names = set(res.physical_mapping["entities"]) - set(prior.physical_mapping["entities"])
+    for name in new_names:
+        assert res.physical_mapping["entities"][name]["firstSeenAt"] >= first_seen

@@ -37,6 +37,10 @@ SAMPLE_VALUE_OVERFLOW_K: int = 50
 
 # Cache
 DEFAULT_CACHE_DIR: str = ".schema-analyzer-cache"
+# Stamped into every cache payload's ``_cache`` block; entries carrying a
+# different (or no) version are refused and discarded on load (PRD §4.1).
+# Bump when the cached analysis payload shape changes incompatibly.
+CACHE_SCHEMA_VERSION: int = 1
 # Optional environment variable that, when set, restricts every
 # resolved cache directory to a subtree rooted at its value. Lets
 # operators expose the v1 tool over an MCP/RPC surface without

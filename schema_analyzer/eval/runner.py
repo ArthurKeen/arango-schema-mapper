@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..analyzer import AgenticSchemaAnalyzer
-from ..defaults import DEFAULT_EVAL_SAMPLE_LIMIT, DEFAULT_EVAL_SCALE, DEFAULT_TIMEOUT_MS
+from ..defaults import DEFAULT_EVAL_SAMPLE_LIMIT, DEFAULT_EVAL_SCALE, DEFAULT_TIMEOUT_MS, EVAL_DELTA_THRESHOLD
 from .calibration import compute_calibration
 from .domain_loader import list_domains, load_domain_spec
 from .generator import PhysicalVariant, materialize_domain_variant
@@ -155,6 +155,50 @@ def save_eval_report(results: list[EvalRunResult], path: str | Path) -> None:
     runs = [_result_to_entry(r) for r in results]
     data = {"runs": runs, "calibration": compute_calibration(runs)}
     Path(path).write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", "utf-8")
+
+
+_GATED_METRICS = (
+    ("ent_f1", lambda e: e["score"]["entities"]["f1"]),
+    ("rel_f1", lambda e: e["score"]["relationships"]["f1"]),
+    ("dr_f1", lambda e: e["domain_range"]["f1"]),
+    ("map_acc", lambda e: e["mapping_style"]["relationships"]["accuracy"]),
+)
+
+
+def report_regressions(
+    current: str | Path,
+    baseline: str | Path,
+    *,
+    threshold: float = EVAL_DELTA_THRESHOLD,
+) -> list[str]:
+    """Quality metrics that regressed vs the baseline report (PRD §3.12.3).
+
+    A regression is a gated metric (entity/relationship/domain-range F1,
+    mapping-style accuracy — confidence is advisory, not gated) dropping by
+    more than ``threshold`` on any (domain, variant) present in both reports,
+    or a baseline (domain, variant) missing entirely from the current report.
+    Returns human-readable descriptions, empty when the gate passes — the CI
+    regression gate fails the build on a non-empty result (``schema-analyzer
+    eval --fail-on-regression``).
+    """
+    cur = _report_runs(json.loads(Path(current).read_text("utf-8")))
+    base = _report_runs(json.loads(Path(baseline).read_text("utf-8")))
+
+    cur_index = {f"{e['domain']}|{e['variant']}": e for e in cur}
+    regressions: list[str] = []
+
+    for key, prev in sorted((f"{e['domain']}|{e['variant']}", e) for e in base):
+        entry = cur_index.get(key)
+        if entry is None:
+            regressions.append(f"{key}: present in baseline but missing from current report")
+            continue
+        for name, metric in _GATED_METRICS:
+            base_val = float(metric(prev))
+            cur_val = float(metric(entry))
+            if base_val - cur_val > threshold:
+                regressions.append(f"{key} {name}: {base_val:.3f} -> {cur_val:.3f} (drop {base_val - cur_val:.3f})")
+
+    return regressions
 
 
 def compare_reports(current: str | Path, baseline: str | Path) -> str:

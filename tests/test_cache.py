@@ -46,3 +46,50 @@ def test_cache_from_config_filesystem(tmp_path: Path):
 def test_cache_from_config_filesystem_default_dir():
     cache = cache_from_config({"type": "filesystem"})
     assert isinstance(cache, FilesystemCache)
+
+
+# ── cache_schema_version + invalidate (PRD §4.1) ─────────────────────────
+
+
+def test_cache_set_stamps_schema_version(tmp_path: Path):
+    from schema_analyzer.defaults import CACHE_SCHEMA_VERSION
+
+    cache = FilesystemCache(directory=tmp_path / "cache")
+    cache.set("fp", {"metadata": {}}, ttl_seconds=3600)
+    entry = cache.get("fp")
+    assert entry is not None
+    assert entry["_cache"]["cache_schema_version"] == CACHE_SCHEMA_VERSION
+
+
+def test_cache_refuses_and_discards_mismatched_schema_version(tmp_path: Path):
+    import json
+
+    cache = FilesystemCache(directory=tmp_path / "cache")
+    cache.set("fp", {"metadata": {}}, ttl_seconds=3600)
+    path = cache._path("fp")
+    doctored = json.loads(path.read_text("utf-8"))
+    doctored["_cache"]["cache_schema_version"] = -1
+    path.write_text(json.dumps(doctored), "utf-8")
+
+    assert cache.get("fp") is None  # refused
+    assert not path.exists()  # ...and discarded
+
+
+def test_cache_refuses_legacy_unversioned_entries(tmp_path: Path):
+    import json
+
+    cache = FilesystemCache(directory=tmp_path / "cache")
+    path = cache._path("fp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"metadata": {}, "_cache": {"ttl_seconds": 3600, "generated_at": 1.0}}), "utf-8")
+    assert cache.get("fp") is None
+    assert not path.exists()
+
+
+def test_cache_invalidate_removes_entry_and_tolerates_missing(tmp_path: Path):
+    cache = FilesystemCache(directory=tmp_path / "cache")
+    cache.set("fp", {"metadata": {}}, ttl_seconds=3600)
+    assert cache.get("fp") is not None
+    cache.invalidate("fp")
+    assert cache.get("fp") is None
+    cache.invalidate("fp")  # second call is a no-op, not an error

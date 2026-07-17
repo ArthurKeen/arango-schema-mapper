@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### PRD drift closure (5 gaps from 2026-07-16 prd-sync)
+
+- **Temporal element provenance (PRD §3.13.2).** Every conceptual
+  entity/relationship and physical-mapping entry now carries `firstSeenAt` /
+  `lastValidatedAt` alongside the existing `source` tag. Fresh analyses stamp
+  both; the incremental `unchanged` / `stats_only` branches restamp
+  `lastValidatedAt` (fingerprint match = revalidation); a full re-analysis via
+  `analyze_incremental` carries `firstSeenAt` forward for elements that
+  survived the schema change. New `provenance.stamp_temporal_provenance` /
+  `carry_forward_first_seen` helpers.
+- **Cache schema versioning + invalidate (PRD §4.1).** Cache payloads stamp
+  `_cache.cache_schema_version` (`defaults.CACHE_SCHEMA_VERSION`); loading
+  refuses and discards entries with a mismatched or missing version (existing
+  caches recompute once). `AnalysisCache` gains the PRD-specified
+  `invalidate(fingerprint)` (missing entries are a no-op).
+- **CI eval regression gate (PRD §3.12.3).** New
+  `eval.report_regressions(current, baseline)` and `schema-analyzer eval
+  --fail-on-regression` (exit 1 when a gated quality metric — entity /
+  relationship / domain-range F1, mapping-style accuracy — drops more than
+  `EVAL_DELTA_THRESHOLD` vs the baseline, or a baseline domain/variant
+  disappears; confidence is advisory). The Integration workflow now runs the
+  deterministic no-LLM eval against the committed
+  `eval/baselines/ci_no_llm_baseline.json`.
+- **CI Python matrix (PRD §4.6).** Test matrix extended to Python 3.13.
+
 ### Collection-per-entity strategy for pure-PG schemas
 
 - **`entity_strategy="collection"`.** Opt-in override on

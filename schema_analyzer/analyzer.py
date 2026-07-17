@@ -53,7 +53,7 @@ from .incremental import (
     refresh_statistics,
 )
 from .mapping import PhysicalMapping
-from .provenance import annotate_provenance
+from .provenance import annotate_provenance, carry_forward_first_seen, stamp_temporal_provenance
 from .providers import create_provider, get_default_model, get_provider_env_var
 from .quality import build_quality_block
 from .redaction import (
@@ -373,14 +373,13 @@ class AgenticSchemaAnalyzer:
             _apply_statistics(db, stats_holder, snapshot)
             baseline_conceptual = ConceptualSchema.from_json(baseline.get("conceptualSchema", {})).to_json()
             baseline_physical = PhysicalMapping.from_json(baseline.get("physicalMapping", {})).to_json()
-            annotate_provenance(
-                {
-                    "conceptualSchema": baseline_conceptual,
-                    "physicalMapping": baseline_physical,
-                    "metadata": {},
-                },
-                used_baseline=True,
-            )
+            baseline_payload = {
+                "conceptualSchema": baseline_conceptual,
+                "physicalMapping": baseline_physical,
+                "metadata": {},
+            }
+            annotate_provenance(baseline_payload, used_baseline=True)
+            stamp_temporal_provenance(baseline_payload, now=now_iso())
             baseline_quality, baseline_health = build_quality_block(
                 baseline_conceptual, baseline_physical, snapshot, BASELINE_NO_LLM_CONFIDENCE, self.gold_reference
             )
@@ -585,16 +584,28 @@ class AgenticSchemaAnalyzer:
         logger.info("Incremental analysis change-state: %s", status)
 
         if status in (CHANGE_SHAPE_CHANGED, CHANGE_NO_CACHE):
-            return self.analyze_physical_schema(db, **analyze_kwargs)
+            result = self.analyze_physical_schema(db, **analyze_kwargs)
+            # Elements that survived the schema change keep the firstSeenAt of
+            # the run that first discovered them (PRD §3.13.2).
+            carry_forward_first_seen(
+                {"conceptualSchema": result.conceptual_schema, "physicalMapping": result.physical_mapping},
+                {"conceptualSchema": pr.conceptual_schema, "physicalMapping": pr.physical_mapping},
+            )
+            return result
         if status == CHANGE_STATS_CHANGED:
             return refresh_statistics(db, pr)
 
-        # unchanged
+        # unchanged — the fingerprint match just revalidated every element.
+        completed = now_iso()
+        stamp_temporal_provenance(
+            {"conceptualSchema": pr.conceptual_schema, "physicalMapping": pr.physical_mapping},
+            now=completed,
+        )
         meta = pr.metadata.model_copy(
             update={
                 "incremental_refresh": "unchanged",
                 "cache_hit": True,
-                "analysis_completed_at": now_iso(),
+                "analysis_completed_at": completed,
             }
         )
         return AnalysisResult(
@@ -733,6 +744,7 @@ class AgenticSchemaAnalyzer:
         review_required = confidence < self.review_threshold or bool(errors)
 
         annotate_provenance(data, used_baseline=bool(errors))
+        stamp_temporal_provenance(data, now=now_iso())
         conceptual_schema = ConceptualSchema.from_json(
             data.get("conceptualSchema", {}) if isinstance(data.get("conceptualSchema"), dict) else {}
         ).to_json()

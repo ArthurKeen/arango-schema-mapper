@@ -1,7 +1,8 @@
-"""Element-level source provenance (PRD §3.13.2).
+"""Element-level provenance (PRD §3.13.2).
 
-Stamps every conceptual entity/relationship and physical-mapping entry with a
-``source`` tag so downstream auditors can tell where each element came from:
+Source tags — stamps every conceptual entity/relationship and physical-mapping
+entry with a ``source`` tag so downstream auditors can tell where each element
+came from:
 
 * ``"llm"`` — produced by the LLM generate/validate/repair loop.
 * ``"baseline"`` — produced by deterministic inference, either because no LLM
@@ -12,6 +13,14 @@ Stamps every conceptual entity/relationship and physical-mapping entry with a
 
 The annotator is deterministic and additive; it never overwrites an existing
 ``"human"`` tag and never changes any other field.
+
+Temporal lineage — the same elements carry ``firstSeenAt`` /
+``lastValidatedAt`` ISO-8601 stamps: ``lastValidatedAt`` is refreshed every
+time an analysis derives or revalidates the element (including the
+``unchanged`` / ``stats_only`` incremental branches, where fingerprint match
+constitutes revalidation), while ``firstSeenAt`` is carried forward from the
+prior result when :func:`carry_forward_first_seen` links two runs, so a
+long-lived entity keeps the timestamp of the run that first discovered it.
 """
 
 from __future__ import annotations
@@ -91,3 +100,65 @@ def annotate_provenance(data: dict[str, Any], *, used_baseline: bool) -> None:
             mapped = pm_rels.get(r["type"])
             inherited = mapped.get("source") if isinstance(mapped, dict) else None
             _tag(r, inherited if isinstance(inherited, str) else default_source)
+
+
+def _iter_elements(data: dict[str, Any]):
+    """Yield every provenance-bearing element dict in an analysis payload:
+    conceptual entities/relationships and physical-mapping entries, each with
+    its identity key so two payloads can be matched element-by-element."""
+    cs = data.get("conceptualSchema")
+    if isinstance(cs, dict):
+        for e in cs.get("entities", []) or []:
+            if isinstance(e, dict) and isinstance(e.get("name"), str):
+                yield ("entity", e["name"]), e
+        for r in cs.get("relationships", []) or []:
+            if isinstance(r, dict) and isinstance(r.get("type"), str):
+                yield ("relationship", r["type"]), r
+    pm = data.get("physicalMapping")
+    if isinstance(pm, dict):
+        ents = pm.get("entities")
+        if isinstance(ents, dict):
+            for name, entry in ents.items():
+                if isinstance(entry, dict):
+                    yield ("pm_entity", name), entry
+        rels = pm.get("relationships")
+        if isinstance(rels, dict):
+            for rtype, entry in rels.items():
+                if isinstance(entry, dict):
+                    yield ("pm_relationship", rtype), entry
+
+
+def stamp_temporal_provenance(data: dict[str, Any], *, now: str) -> None:
+    """Stamp ``firstSeenAt`` / ``lastValidatedAt`` on every element (PRD §3.13.2).
+
+    ``lastValidatedAt`` is always set to ``now`` — this analysis just derived
+    or revalidated the element. ``firstSeenAt`` is preserved when the element
+    already carries one (the incremental ``unchanged`` / ``stats_only``
+    branches restamp the prior payload in place), otherwise set to ``now``.
+    Mutates ``data`` in place; ``data`` has the ``{conceptualSchema,
+    physicalMapping, ...}`` shape.
+    """
+    for _key, element in _iter_elements(data):
+        element["lastValidatedAt"] = now
+        if not isinstance(element.get("firstSeenAt"), str):
+            element["firstSeenAt"] = now
+
+
+def carry_forward_first_seen(data: dict[str, Any], prior: dict[str, Any]) -> None:
+    """Carry ``firstSeenAt`` forward from ``prior`` onto matching elements.
+
+    Used by ``analyze_incremental`` after a full re-analysis so an entity that
+    survived a schema change keeps the timestamp of the run that first
+    discovered it (matching by conceptual name / relationship type / mapping
+    key). Elements absent from ``prior`` keep their fresh stamp. Mutates
+    ``data`` in place.
+    """
+    prior_first_seen = {
+        key: element["firstSeenAt"]
+        for key, element in _iter_elements(prior)
+        if isinstance(element.get("firstSeenAt"), str)
+    }
+    for key, element in _iter_elements(data):
+        inherited = prior_first_seen.get(key)
+        if inherited is not None:
+            element["firstSeenAt"] = inherited

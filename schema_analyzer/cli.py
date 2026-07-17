@@ -137,6 +137,7 @@ def _cmd_eval(args: argparse.Namespace) -> int:
         compare_reports,
         format_calibration_report,
         format_eval_table,
+        report_regressions,
         run_eval,
         save_eval_report,
     )
@@ -186,6 +187,18 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     if args.baseline and args.report and Path(args.baseline).exists():
         print(f"\n--- Comparison vs {args.baseline} ---")
         print(compare_reports(args.report, args.baseline))
+
+        if args.fail_on_regression:
+            regressions = report_regressions(args.report, args.baseline)
+            if regressions:
+                print("\nREGRESSIONS vs baseline:")
+                for r in regressions:
+                    print(f"  {r}")
+                return 1
+            print("\nNo regressions vs baseline.")
+    elif args.fail_on_regression:
+        print("--fail-on-regression requires both --report and an existing --baseline", file=sys.stderr)
+        return 1
 
     return 0
 
@@ -251,6 +264,11 @@ def main(argv: list[str] | None = None) -> int:
     eval_p.add_argument("--scale", type=int, default=DEFAULT_EVAL_SCALE, help="Scale factor for seeded data.")
     eval_p.add_argument("--report", default=None, help="Save JSON report to this path.")
     eval_p.add_argument("--baseline", default=None, help="Baseline report path for comparison.")
+    eval_p.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 when a gated quality metric drops vs --baseline (CI regression gate; requires --report).",
+    )
     eval_p.add_argument("--no-cleanup", dest="cleanup", action="store_false", default=True, help="Keep eval database.")
     eval_p.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
 
