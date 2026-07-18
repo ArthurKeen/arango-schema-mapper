@@ -38,6 +38,12 @@ permissions:
 jobs:
   build:
     name: Build sdist + wheel
+    # Only the canonical repo publishes. The origin remote mirror-pushes tags to
+    # arango-solutions/arango-schema-extractor, which is NOT a registered PyPI
+    # Trusted Publisher, so its upload would fail every release. Skipping here
+    # cascades to the publish jobs (they `needs: build`), so the mirror is a
+    # clean no-op instead of a recurring failure notification.
+    if: github.repository == 'ArthurKeen/arango-schema-mapper'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -69,8 +75,9 @@ jobs:
     name: Publish to PyPI
     needs: build
     if: >-
-      github.event_name == 'push'
-      || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+      github.repository == 'ArthurKeen/arango-schema-mapper'
+      && (github.event_name == 'push'
+      || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi'))
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -90,7 +97,10 @@ jobs:
   publish-testpypi:
     name: Publish to TestPyPI
     needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    if: >-
+      github.repository == 'ArthurKeen/arango-schema-mapper'
+      && github.event_name == 'workflow_dispatch'
+      && inputs.target == 'testpypi'
     runs-on: ubuntu-latest
     environment:
       name: testpypi
