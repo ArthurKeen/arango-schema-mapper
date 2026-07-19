@@ -87,14 +87,24 @@ def to_csi(
     source: dict[str, Any] | None = None,
     producer: str = "arango-schema-analyzer",
     producer_version: str | None = None,
+    owl_naming: bool = True,
+    entity_overrides: dict[str, str] | None = None,
+    property_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Produce a CSI v1 document from an ``AnalysisResult`` or serialized dict."""
+    """Produce a CSI v1 document from an ``AnalysisResult`` or serialized dict.
+
+    ``owl_naming`` (default on, per CDF CC-12) normalizes the *conceptual*
+    layer to the W3C-community OWL style — entities singular PascalCase,
+    properties/relationships lowerCamel — recording each renamed property's
+    physical field so consumers resolve back to stored names. Pass
+    ``owl_naming=False`` for a raw, physically-named document.
+    """
     data = normalize_analysis_dict(analysis)
     conceptual = data.get("conceptualSchema")
     physical = data.get("physicalMapping")
     metadata = data.get("metadata")
 
-    return {
+    doc = {
         "csiVersion": CSI_VERSION,
         "conceptualModel": conceptual
         if isinstance(conceptual, dict)
@@ -108,6 +118,13 @@ def to_csi(
             producer_version=producer_version,
         ),
     }
+    if owl_naming:
+        from .naming import apply_owl_naming
+
+        doc = apply_owl_naming(
+            doc, entity_overrides=entity_overrides, property_overrides=property_overrides
+        )
+    return doc
 
 
 def from_csi(csi: dict[str, Any]) -> dict[str, Any]:
@@ -146,7 +163,17 @@ def load_csi_schema_v1() -> dict[str, Any]:
     return cast("dict[str, Any]", json.loads(p.read_text(encoding="utf-8")))
 
 
-def validate_csi(document: dict[str, Any]) -> list[str]:
-    """Return a sorted list of CSI v1 schema-validation error messages (empty = valid)."""
+def validate_csi(document: dict[str, Any], *, naming: bool = True) -> list[str]:
+    """Return a sorted list of CSI v1 validation error messages (empty = valid).
+
+    Checks the JSON Schema and, unless ``naming=False``, the CC-12 OWL naming
+    convention on the conceptual layer (entities singular PascalCase,
+    properties/relationships lowerCamel).
+    """
     validator = Draft202012Validator(load_csi_schema_v1())
-    return [err.message for err in sorted(validator.iter_errors(document), key=str)]
+    issues = [err.message for err in sorted(validator.iter_errors(document), key=str)]
+    if naming:
+        from .naming import naming_issues
+
+        issues.extend(naming_issues(document))
+    return issues

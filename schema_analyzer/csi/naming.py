@@ -1,0 +1,224 @@
+"""W3C-community OWL naming for CSI conceptual models (CDF CC-12).
+
+Every CSI-conforming conceptual model follows the OWL ecosystem convention:
+
+* **entity (class) names** — singular ``PascalCase``: ``Account``,
+  ``UsageMetric`` — never ``accounts`` or ``usage_metrics``;
+* **property names** — ``lowerCamel``: ``accountId``, ``citableUrl`` — never
+  ``account_id`` or ``HAS_NAME``;
+* **relationship names** — ``lowerCamel`` verb phrases: ``hasPart``.
+
+Only the *conceptual* layer is renamed. The physical mapping keeps raw
+collection/field names, and every renamed property records its physical
+realization under ``arangoPhysicalMapping.entities.<E>.properties.<name>.field``
+so transpilers (arango-sparql-py ``phys:attributeName``, R2RML ``rr:column``)
+resolve the conceptual name back to the stored one.
+
+:func:`apply_owl_naming` is the shared producer transform (used by ``to_csi``
+here and available to any CSI producer); :func:`naming_issues` is the
+validation half wired into ``validate_csi``. Singularization is best-effort
+English with a per-call ``overrides`` map — the curation "confirm" step is the
+human backstop for the irregular cases.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+__all__ = [
+    "lower_camel",
+    "pascal_singular",
+    "singularize",
+    "apply_owl_naming",
+    "naming_issues",
+]
+
+_ENTITY_RE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
+_PROPERTY_RE = re.compile(r"^[a-z][A-Za-z0-9]*$")
+# Split camelCase / PascalCase / snake / kebab / space / acronym runs:
+# "HTTPServer" → HTTP, Server; "HAS_NAME" → HAS, NAME; "accountId" → account, Id.
+_SPLIT_RE = re.compile(
+    r"[A-Z]+(?=[A-Z][a-z])|[A-Z][a-z0-9]+|[A-Z]+|[a-z0-9]+"
+)
+
+
+def _words(name: str) -> list[str]:
+    return _SPLIT_RE.findall(str(name)) or [str(name)]
+
+
+def singularize(word: str) -> str:
+    """Best-effort English singular (``ies``→``y``; sibilant ``es``; ``s``).
+
+    Deliberately simple; pass ``overrides`` to :func:`apply_owl_naming` for
+    irregulars (``people``→``Person``) — and the curation step reviews the
+    result (CDF CC-12).
+    """
+    if not word:
+        return word
+    lower = word.lower()
+    if lower.endswith("ies") and len(word) > 3:
+        return word[:-3] + ("Y" if word[-3].isupper() else "y")
+    if lower.endswith(("ses", "ches", "shes", "xes", "zes")):
+        return word[:-2]
+    if lower.endswith("s") and not lower.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def pascal_singular(name: str, overrides: dict[str, str] | None = None) -> str:
+    """``usage_metrics`` → ``UsageMetric``; ``tickets`` → ``Ticket``."""
+    if overrides and name in overrides:
+        return overrides[name]
+    words = _words(name)
+    if words:
+        words[-1] = singularize(words[-1])
+    return "".join(w[:1].upper() + w[1:].lower() for w in words if w) or str(name)
+
+
+def lower_camel(name: str, overrides: dict[str, str] | None = None) -> str:
+    """``account_id`` → ``accountId``; ``HAS_NAME`` → ``hasName``.
+
+    Leading underscores (ArangoDB system fields like ``_uri``) are preserved
+    so physical passthrough names stay recognizable.
+    """
+    if overrides and name in overrides:
+        return overrides[name]
+    prefix = ""
+    core = str(name)
+    while core.startswith("_"):
+        prefix += "_"
+        core = core[1:]
+    words = _words(core)
+    if not words:
+        return str(name)
+    head = words[0].lower()
+    tail = "".join(w[:1].upper() + w[1:].lower() for w in words[1:])
+    return prefix + head + tail
+
+
+def apply_owl_naming(
+    csi: dict[str, Any],
+    *,
+    entity_overrides: dict[str, str] | None = None,
+    property_overrides: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Return a copy of a CSI document with OWL-conforming conceptual names.
+
+    Renames conceptual entities/properties/relationships and the matching
+    ``arangoPhysicalMapping`` keys; records each renamed property's physical
+    field (``properties.<name>.field``) when not already recorded. Idempotent:
+    conforming names pass through unchanged.
+    """
+    import copy
+
+    doc = copy.deepcopy(csi)
+    conceptual = doc.get("conceptualModel") or {}
+    physical = doc.get("arangoPhysicalMapping") or {}
+    phys_entities = physical.get("entities") or {}
+
+    entity_renames: dict[str, str] = {}
+    for ent in conceptual.get("entities") or []:
+        if not isinstance(ent, dict) or not isinstance(ent.get("name"), str):
+            continue
+        old = ent["name"]
+        new = pascal_singular(old, entity_overrides)
+        entity_renames[old] = new
+        ent["name"] = new
+        if isinstance(ent.get("labels"), list):
+            ent["labels"] = [entity_renames.get(lb, lb) if lb == old else lb for lb in ent["labels"]]
+
+        # Rename conceptual property names, remembering physical fields.
+        prop_renames: dict[str, str] = {}
+        for prop in ent.get("properties") or []:
+            if not isinstance(prop, dict) or not isinstance(prop.get("name"), str):
+                continue
+            p_old = prop["name"]
+            p_new = lower_camel(p_old, property_overrides)
+            prop_renames[p_old] = p_new
+            prop["name"] = p_new
+
+        # Mirror into the physical mapping: key rename + property map.
+        spec = phys_entities.get(old)
+        if isinstance(spec, dict):
+            prop_map = spec.get("properties")
+            if not isinstance(prop_map, dict):
+                prop_map = {}
+            new_prop_map: dict[str, Any] = {}
+            for p_old, p_new in prop_renames.items():
+                entry = prop_map.get(p_old) or prop_map.get(p_new) or {}
+                if not isinstance(entry, dict):
+                    entry = {}
+                entry.setdefault("field", p_old)
+                new_prop_map[p_new] = entry
+            # Preserve any pre-existing mapped properties we didn't rename.
+            for k, v in prop_map.items():
+                if k not in prop_renames and k not in new_prop_map:
+                    new_prop_map[k] = v
+            if new_prop_map:
+                spec["properties"] = new_prop_map
+
+    # Physical-mapping entity keys follow the conceptual rename; the physical
+    # collection name stays what it is.
+    if isinstance(phys_entities, dict) and entity_renames:
+        physical["entities"] = {
+            entity_renames.get(name, name): spec for name, spec in phys_entities.items()
+        }
+
+    # Relationships: lowerCamel the type; keys in the physical map follow.
+    rel_renames: dict[str, str] = {}
+    for rel in conceptual.get("relationships") or []:
+        if not isinstance(rel, dict):
+            continue
+        rtype = rel.get("type")
+        if isinstance(rtype, str) and rtype:
+            new = lower_camel(rtype, property_overrides)
+            rel_renames[rtype] = new
+            rel["type"] = new
+        for endpoint in ("fromEntity", "toEntity"):
+            val = rel.get(endpoint)
+            if isinstance(val, str) and val in entity_renames:
+                rel[endpoint] = entity_renames[val]
+    phys_rels = physical.get("relationships")
+    if isinstance(phys_rels, dict) and rel_renames:
+        physical["relationships"] = {
+            rel_renames.get(name, name): spec for name, spec in phys_rels.items()
+        }
+
+    return doc
+
+
+def naming_issues(csi: dict[str, Any]) -> list[str]:
+    """CC-12 naming checks for ``validate_csi``.
+
+    Pattern-level only (singularity is a convention reviewed in curation):
+    entity names must be PascalCase identifiers, property/relationship names
+    lowerCamel identifiers.
+    """
+    issues: list[str] = []
+    conceptual = csi.get("conceptualModel") or {}
+    for ent in conceptual.get("entities") or []:
+        if not isinstance(ent, dict):
+            continue
+        name = ent.get("name")
+        if isinstance(name, str) and not _ENTITY_RE.match(name):
+            issues.append(
+                f"entity {name!r} violates CC-12 naming (expected singular PascalCase, e.g. 'UsageMetric')"
+            )
+        for prop in ent.get("properties") or []:
+            if not isinstance(prop, dict):
+                continue
+            p = prop.get("name")
+            if isinstance(p, str) and not p.startswith("_") and not _PROPERTY_RE.match(p):
+                issues.append(
+                    f"property {name}.{p!r} violates CC-12 naming (expected lowerCamel, e.g. 'accountId')"
+                )
+    for rel in conceptual.get("relationships") or []:
+        if not isinstance(rel, dict):
+            continue
+        rtype = rel.get("type")
+        if isinstance(rtype, str) and not _PROPERTY_RE.match(rtype):
+            issues.append(
+                f"relationship {rtype!r} violates CC-12 naming (expected lowerCamel, e.g. 'hasPart')"
+            )
+    return issues

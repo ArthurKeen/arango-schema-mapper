@@ -87,7 +87,7 @@ def test_from_csi_output_feeds_diff_and_gold():
         "csiVersion": "1",
         "conceptualModel": {
             "entities": [{"name": "User"}, {"name": "Post"}],
-            "relationships": [{"type": "WROTE", "fromEntity": "User", "toEntity": "Post"}],
+            "relationships": [{"type": "wrote", "fromEntity": "User", "toEntity": "Post"}],
             "properties": [],
         },
         "arangoPhysicalMapping": {
@@ -95,7 +95,7 @@ def test_from_csi_output_feeds_diff_and_gold():
                 "User": {"style": "COLLECTION", "collectionName": "users"},
                 "Post": {"style": "COLLECTION", "collectionName": "posts"},
             },
-            "relationships": {"WROTE": {"style": "DEDICATED_COLLECTION", "edgeCollectionName": "wrote"}},
+            "relationships": {"wrote": {"style": "DEDICATED_COLLECTION", "edgeCollectionName": "wrote"}},
         },
         "provenance": {"producer": "r2g", "direction": "forward", "source": {"kind": "relational"}},
     }
@@ -113,7 +113,8 @@ def test_from_csi_output_feeds_diff_and_gold():
 
 def test_csi_rejects_relationship_with_collection_name():
     bad = to_csi(ANALYSIS)
-    bad["arangoPhysicalMapping"]["relationships"]["FOLLOWS"]["collectionName"] = "follows"
+    # to_csi applies CC-12 naming (FOLLOWS -> follows)
+    bad["arangoPhysicalMapping"]["relationships"]["follows"]["collectionName"] = "follows"
     errors = validate_csi(bad)
     assert errors, "edges must use edgeCollectionName, not collectionName"
 
