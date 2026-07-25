@@ -61,10 +61,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ArthurKeen/arango-schema-mapper"
-Repository = "https://github.com/ArthurKeen/arango-schema-mapper"
-Issues = "https://github.com/ArthurKeen/arango-schema-mapper/issues"
-Changelog = "https://github.com/ArthurKeen/arango-schema-mapper/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/ArthurKeen/arango-schema-analyzer"
+Repository = "https://github.com/ArthurKeen/arango-schema-analyzer"
+Issues = "https://github.com/ArthurKeen/arango-schema-analyzer/issues"
+Changelog = "https://github.com/ArthurKeen/arango-schema-analyzer/blob/main/CHANGELOG.md"
 
 [project.scripts]
 arangodb-schema-analyzer = "schema_analyzer.cli:main"

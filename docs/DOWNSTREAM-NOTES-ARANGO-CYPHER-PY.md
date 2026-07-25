@@ -1,7 +1,7 @@
 # Downstream migration note — `arango-cypher-py`
 
 **Audience:** maintainers of `arango-cypher-py`
-**Upstream repo:** `ArthurKeen/arango-schema-mapper` (package: `arangodb-schema-analyzer`)
+**Upstream repo:** `ArthurKeen/arango-schema-analyzer` (package: `arangodb-schema-analyzer`)
 **Scope:** what changed in v0.2.0 and the current `main` (post-v0.2.0), and what to
 delete / update on the `arango-cypher-py` side to pick it up.
 
@@ -46,7 +46,7 @@ If you want the cheap fingerprint probes today, depend on the git SHA / `main` u
 a `0.3.0` (or `0.2.1`) is cut — the probes are on `main` but not yet tagged:
 
 ```toml
-"arangodb-schema-analyzer @ git+https://github.com/ArthurKeen/arango-schema-mapper@main",
+"arangodb-schema-analyzer @ git+https://github.com/ArthurKeen/arango-schema-analyzer@main",
 ```
 
 ### 2. Delete the local key-normalization shim (#6)
@@ -245,9 +245,9 @@ change needed unless you want to read the new fields.
 
 ## References
 
-- Upstream repo: https://github.com/ArthurKeen/arango-schema-mapper
+- Upstream repo: https://github.com/ArthurKeen/arango-schema-analyzer
 - Release notes: `CHANGELOG.md` (`0.2.0` and `Unreleased`)
 - PRs:
-  - https://github.com/ArthurKeen/arango-schema-mapper/pull/9 (#2, #3, #4, #5, #6)
-  - https://github.com/ArthurKeen/arango-schema-mapper/pull/10 (#7, addresses #8)
+  - https://github.com/ArthurKeen/arango-schema-analyzer/pull/9 (#2, #3, #4, #5, #6)
+  - https://github.com/ArthurKeen/arango-schema-analyzer/pull/10 (#7, addresses #8)
 - PRD sections of interest: §3.13.3 (change-detection contract), §4.1 (caching)

@@ -14,7 +14,7 @@ The project uses [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publish
    - Account → *Your projects* → *Publishing* → *Add a new pending publisher*
    - PyPI project name: `arangodb-schema-analyzer`
    - Owner: `ArthurKeen`
-   - Repository name: `arango-schema-mapper`
+   - Repository name: `arango-schema-analyzer`
    - Workflow name: `publish.yml`
    - Environment name: `pypi` (use `testpypi` for TestPyPI)
 3. Repeat on TestPyPI if you want dry-run uploads.

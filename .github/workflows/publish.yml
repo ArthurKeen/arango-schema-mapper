@@ -11,7 +11,7 @@ name: Publish to PyPI
 #      or configure a "pending publisher" before the first upload.
 #   2. Under the project -> Publishing, add a Trusted Publisher:
 #        Owner:            ArthurKeen
-#        Repository name:  arango-schema-mapper
+#        Repository name:  arango-schema-analyzer
 #        Workflow name:    publish.yml
 #        Environment:      pypi   (or testpypi)
 #   3. In this repo, create the matching GitHub Environments ("pypi" and optionally "testpypi")
@@ -43,7 +43,7 @@ jobs:
     # Trusted Publisher, so its upload would fail every release. Skipping here
     # cascades to the publish jobs (they `needs: build`), so the mirror is a
     # clean no-op instead of a recurring failure notification.
-    if: github.repository == 'ArthurKeen/arango-schema-mapper'
+    if: github.repository == 'ArthurKeen/arango-schema-analyzer'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -75,7 +75,7 @@ jobs:
     name: Publish to PyPI
     needs: build
     if: >-
-      github.repository == 'ArthurKeen/arango-schema-mapper'
+      github.repository == 'ArthurKeen/arango-schema-analyzer'
       && (github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi'))
     runs-on: ubuntu-latest
@@ -98,7 +98,7 @@ jobs:
     name: Publish to TestPyPI
     needs: build
     if: >-
-      github.repository == 'ArthurKeen/arango-schema-mapper'
+      github.repository == 'ArthurKeen/arango-schema-analyzer'
       && github.event_name == 'workflow_dispatch'
       && inputs.target == 'testpypi'
     runs-on: ubuntu-latest
