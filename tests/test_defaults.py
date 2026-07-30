@@ -13,4 +13,7 @@ def test_defaults_are_sensible():
     assert defaults.DEFAULT_TIMEOUT_MS > 0
     assert defaults.DEFAULT_CACHE_TTL_SECONDS > 0
     assert defaults.SAMPLE_VALUE_TOP_K > 0
+    # Full-label-set (LPG) mode: off by default, with a positive safety ceiling.
+    assert defaults.MIN_TYPE_VALUE_COUNT == 0
+    assert defaults.FULL_LABEL_SET_HARD_CAP > defaults.SAMPLE_VALUE_TOP_K
     assert isinstance(defaults.DEFAULT_CACHE_DIR, str)

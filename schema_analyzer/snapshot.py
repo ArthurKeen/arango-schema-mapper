@@ -17,7 +17,9 @@ from ._arango import (
     graph_properties,
 )
 from .defaults import (
+    FULL_LABEL_SET_HARD_CAP,
     MAX_TYPE_FIELD_DISTINCT_VALUES,
+    MAX_TYPE_VALUE_LENGTH,
     SAMPLE_VALUE_OVERFLOW_K,
     SAMPLE_VALUE_TOP_K,
     SNAPSHOT_FORMAT_VERSION,
@@ -43,6 +45,8 @@ def _detect_type_fields_via_collect(
     collection_name: str,
     *,
     top_k: int = SAMPLE_VALUE_TOP_K,
+    floor: int = 0,
+    hard_cap: int = FULL_LABEL_SET_HARD_CAP,
 ) -> tuple[list[str], dict[str, list[dict[str, Any]]], dict[str, int], dict[str, list[dict[str, Any]]]]:
     """
     Detect type discriminator fields using AQL COLLECT for accurate counting.
@@ -54,6 +58,12 @@ def _detect_type_fields_via_collect(
     total, and ``overflow`` keeps up to ``SAMPLE_VALUE_OVERFLOW_K`` values
     ranked past the top-K — so a dropped discriminator value (e.g. a class
     ranked 24th under a top-20 cap) is reportable instead of silently absent.
+
+    ``floor`` > 0 switches to LPG full-label-set mode: ``value_counts`` then
+    keeps EVERY value whose count is >= ``floor`` and whose text looks like a
+    label (dropping sub-floor and free-text junk), unbounded by ``top_k`` and
+    ceilinged by ``hard_cap``; ``overflow`` samples the genuine sub-floor drops.
+    ``floor`` == 0 preserves the exact top-K behaviour.
     """
     try:
         cursor = aql_execute(
@@ -78,25 +88,63 @@ def _detect_type_fields_via_collect(
     overflow: dict[str, list[dict[str, Any]]] = {}
     for key in candidates:
         try:
-            cursor = aql_execute(
-                db,
-                "LET groups = ("
-                "FOR d IN @@c "
-                "COLLECT val = d[@field] WITH COUNT INTO cnt "
-                "FILTER val != null "
-                "SORT cnt DESC "
-                "RETURN {value: val, count: cnt}"
-                ") "
-                "RETURN {distinct: LENGTH(groups), "
-                "top: SLICE(groups, 0, @top), "
-                "overflow: SLICE(groups, @top, @overflowLen)}",
-                bind_vars={
-                    "@c": collection_name,
-                    "field": key,
-                    "top": top_k,
-                    "overflowLen": SAMPLE_VALUE_OVERFLOW_K,
-                },
-            )
+            if floor and floor > 0:
+                # Full-label-set mode: keep EVERY value clearing the floor that
+                # looks like a label; report a sample of the sub-floor drops.
+                cursor = aql_execute(
+                    db,
+                    "LET groups = ("
+                    "FOR d IN @@c "
+                    "COLLECT val = d[@field] WITH COUNT INTO cnt "
+                    "FILTER val != null "
+                    "SORT cnt DESC "
+                    "RETURN {value: val, count: cnt}"
+                    ") "
+                    "LET kept = ("
+                    "FOR g IN groups "
+                    "FILTER g.count >= @floor "
+                    "FILTER IS_STRING(g.value) AND LENGTH(g.value) <= @maxLen "
+                    "AND REGEX_TEST(g.value, @labelRe) AND REGEX_TEST(g.value, @letterRe) "
+                    "LIMIT @hardCap RETURN g"
+                    ") "
+                    # ``distinct`` is an AQL reserved word — quote reserved-word
+                    # object keys or ArangoDB rejects the query (ERR 1501).
+                    'RETURN {"distinct": LENGTH(groups), "top": kept, '
+                    '"overflow": SLICE('
+                    "(FOR g IN groups FILTER g.count < @floor RETURN g), 0, @overflowLen)}",
+                    bind_vars={
+                        "@c": collection_name,
+                        "field": key,
+                        "floor": floor,
+                        "maxLen": MAX_TYPE_VALUE_LENGTH,
+                        "labelRe": "^[A-Za-z0-9_-]+$",
+                        "letterRe": "[A-Za-z]",
+                        "hardCap": hard_cap,
+                        "overflowLen": SAMPLE_VALUE_OVERFLOW_K,
+                    },
+                )
+            else:
+                cursor = aql_execute(
+                    db,
+                    "LET groups = ("
+                    "FOR d IN @@c "
+                    "COLLECT val = d[@field] WITH COUNT INTO cnt "
+                    "FILTER val != null "
+                    "SORT cnt DESC "
+                    "RETURN {value: val, count: cnt}"
+                    ") "
+                    # ``distinct`` is an AQL reserved word — quote reserved-word
+                    # object keys or ArangoDB rejects the query (ERR 1501).
+                    'RETURN {"distinct": LENGTH(groups), '
+                    '"top": SLICE(groups, 0, @top), '
+                    '"overflow": SLICE(groups, @top, @overflowLen)}',
+                    bind_vars={
+                        "@c": collection_name,
+                        "field": key,
+                        "top": top_k,
+                        "overflowLen": SAMPLE_VALUE_OVERFLOW_K,
+                    },
+                )
             rows = list(cursor)
             row = rows[0] if rows and isinstance(rows[0], dict) else {}
             items = row.get("top")
@@ -630,6 +678,7 @@ def snapshot_physical_schema(
     include_samples_in_snapshot: bool = False,
     graph_scope: str | None = None,
     sample_value_top_k: int | None = None,
+    min_type_value_count: int = 0,
 ) -> dict[str, Any]:
     """
     Deterministic physical schema snapshot using python-arango Database.
@@ -652,7 +701,10 @@ def snapshot_physical_schema(
     scales with it so the extra observed values don't disqualify the field.
     """
     top_k = sample_value_top_k if isinstance(sample_value_top_k, int) and sample_value_top_k > 0 else SAMPLE_VALUE_TOP_K
-    max_distinct = max(MAX_TYPE_FIELD_DISTINCT_VALUES, top_k)
+    floor = min_type_value_count if isinstance(min_type_value_count, int) and min_type_value_count > 0 else 0
+    # In full-label-set mode the discriminator legitimately has thousands of
+    # distinct values, so the acceptance bound must not reject it for cardinality.
+    max_distinct = FULL_LABEL_SET_HARD_CAP if floor else max(MAX_TYPE_FIELD_DISTINCT_VALUES, top_k)
     collections_info = db.collections()
     if isinstance(collections_info, dict):
         collections = collections_info
@@ -680,6 +732,8 @@ def snapshot_physical_schema(
         "graphs": [],
         "database": _collect_database_properties(db),
     }
+    if floor:
+        snapshot["min_type_value_count"] = floor
 
     # ── Phase 1: Collect metadata for every collection ──────────────────
     entries: list[dict[str, Any]] = []
@@ -723,7 +777,7 @@ def snapshot_physical_schema(
     # ── Phase 2: Detect type discriminators for ALL collections (COLLECT) ──
     for entry in entries:
         candidates, value_counts, distinct_counts, overflow = _detect_type_fields_via_collect(
-            db, entry["name"], top_k=top_k
+            db, entry["name"], top_k=top_k, floor=floor
         )
         entry["candidate_type_fields"] = candidates
         entry["sample_field_value_counts"] = value_counts

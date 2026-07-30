@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 from .defaults import (
+    FULL_LABEL_SET_HARD_CAP,
     MAX_BROADENED_TYPE_CANDIDATES,
     MAX_TYPE_FIELD_DISTINCT_VALUES,
     MAX_TYPE_VALUE_LENGTH,
@@ -230,6 +231,12 @@ def _passes_distribution_shape(
         return n_distinct == 1
     if n_distinct > max_distinct:
         return False
+    # Full-label-set mode (signalled by the raised acceptance bound) deliberately
+    # keeps the long tail of real labels and drops the sub-floor / non-label
+    # junk, so the kept values legitimately cover less than the default fraction
+    # of documents — skip the coverage gate rather than reject the field.
+    if max_distinct >= FULL_LABEL_SET_HARD_CAP:
+        return True
     return not (
         total_docs > 0 and observed_count > 0 and (observed_count / total_docs) < MIN_TYPE_FIELD_COVERAGE_FRACTION
     )

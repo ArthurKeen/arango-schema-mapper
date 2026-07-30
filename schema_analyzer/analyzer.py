@@ -27,6 +27,7 @@ from .defaults import (
     DEFAULT_TIMEOUT_MS,
     MAX_REPAIR_ATTEMPTS,
     MIN_LLM_BUDGET_MS,
+    SAMPLE_VALUE_TOP_K,
 )
 from .domain_detect import DomainHint, detect_domain, domain_hint_from_context
 from .enrichment import (
@@ -100,6 +101,34 @@ def _default_system_prompt() -> str:
         "You are a schema analysis engine. Return ONLY a single JSON object matching the provided schema. "
         "Do not include any markdown fences, explanations, or extra text."
     )
+
+
+def _bound_snapshot_value_counts(snapshot: dict[str, Any], top_k: int) -> dict[str, Any]:
+    """Return a copy of ``snapshot`` with each collection's
+    ``sample_field_value_counts`` truncated to the ``top_k`` highest-count values.
+
+    Used only to bound the LLM prompt in full-label-set mode: the deterministic
+    baseline path keeps the entire label vocabulary, but the model prompt must
+    stay within budget, so it sees only the top-K values (already sorted by
+    count DESC). The original snapshot is never mutated.
+    """
+    cols = snapshot.get("collections")
+    if not isinstance(cols, list):
+        return snapshot
+    bounded_cols: list[Any] = []
+    for col in cols:
+        vc = col.get("sample_field_value_counts") if isinstance(col, dict) else None
+        if isinstance(vc, dict) and any(isinstance(v, list) and len(v) > top_k for v in vc.values()):
+            new_col = dict(col)
+            new_col["sample_field_value_counts"] = {
+                f: (items[:top_k] if isinstance(items, list) else items) for f, items in vc.items()
+            }
+            bounded_cols.append(new_col)
+        else:
+            bounded_cols.append(col)
+    new_snap = dict(snapshot)
+    new_snap["collections"] = bounded_cols
+    return new_snap
 
 
 def _build_prompt(snapshot: dict[str, Any], *, domain_hint: DomainHint | None = None) -> str:
@@ -298,6 +327,7 @@ class AgenticSchemaAnalyzer:
         graph_scope: str | None = None,
         entity_strategy: Literal["auto", "collection"] = "auto",
         max_entity_types: int | None = None,
+        min_type_value_count: int = 0,
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult | _AnalysisContext:
         """Shared setup for sync and async analysis paths.
@@ -313,6 +343,7 @@ class AgenticSchemaAnalyzer:
             include_samples_in_snapshot=include_samples_in_snapshot,
             graph_scope=graph_scope,
             sample_value_top_k=max_entity_types,
+            min_type_value_count=min_type_value_count,
         )
         snapshot["generated_at"] = now_iso()
         fingerprint = fingerprint_physical_schema(snapshot, include_samples=False)
@@ -441,8 +472,13 @@ class AgenticSchemaAnalyzer:
         if self.redaction is not None and self.redaction.mask_field_names:
             cols = snapshot.get("collections")
             field_name_map = build_field_name_map(cols) if isinstance(cols, list) else {}
+        egress_snapshot = snapshot
+        if min_type_value_count and min_type_value_count > 0:
+            # The baseline path (above) consumed the full label set; the LLM
+            # prompt must stay bounded, so feed the model only the top-K values.
+            egress_snapshot = _bound_snapshot_value_counts(snapshot, SAMPLE_VALUE_TOP_K)
         prompt = _build_prompt(
-            redact_snapshot_for_egress(snapshot, self.redaction, field_name_map=field_name_map),
+            redact_snapshot_for_egress(egress_snapshot, self.redaction, field_name_map=field_name_map),
             domain_hint=domain_hint,
         )
 
@@ -472,6 +508,7 @@ class AgenticSchemaAnalyzer:
         graph_scope: str | None = None,
         entity_strategy: Literal["auto", "collection"] = "auto",
         max_entity_types: int | None = None,
+        min_type_value_count: int = 0,
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult:
         prov = _ProvenanceStamp(run_id=str(uuid.uuid4()), started_at=now_iso())
@@ -485,6 +522,7 @@ class AgenticSchemaAnalyzer:
             graph_scope=graph_scope,
             entity_strategy=entity_strategy,
             max_entity_types=max_entity_types,
+            min_type_value_count=min_type_value_count,
             _snapshot=_snapshot,
         )
         if isinstance(prep, AnalysisResult):
@@ -626,6 +664,7 @@ class AgenticSchemaAnalyzer:
         graph_scope: str | None = None,
         entity_strategy: Literal["auto", "collection"] = "auto",
         max_entity_types: int | None = None,
+        min_type_value_count: int = 0,
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult:
         """Async version of analyze_physical_schema. Requires provider with agenerate()."""
@@ -640,6 +679,7 @@ class AgenticSchemaAnalyzer:
             graph_scope=graph_scope,
             entity_strategy=entity_strategy,
             max_entity_types=max_entity_types,
+            min_type_value_count=min_type_value_count,
             _snapshot=_snapshot,
         )
         if isinstance(prep, AnalysisResult):

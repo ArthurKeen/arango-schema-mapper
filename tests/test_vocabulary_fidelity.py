@@ -203,6 +203,73 @@ def test_default_bound_unchanged_without_raised_top_k():
 # ── Redaction covers the new snapshot keys ──────────────────────────────
 
 
+# ── Full-label-set mode (min_type_value_count): no cap on LPG labels ────
+#
+# An LPG carries its whole label vocabulary in one ``type`` field, so a top-N
+# value cap silently drops real labels and disables label-rooted queries. In
+# full-label-set mode the snapshot keeps EVERY above-floor label, and the
+# baseline maps them all — unbounded by the top-K acceptance bound.
+
+
+def _full_set_snapshot(n_labels: int = 40, *, floor: int = 2, distinct: int | None = None):
+    """A single LPG ``Node`` collection as the floor-mode sampler would return
+    it: every kept ``type`` value clears the floor, and a genuine low-count
+    label (``ORG_REG``) sits far past the old top-20 rank."""
+    values = [{"value": f"CLASS_{i:02d}", "count": 100 - i} for i in range(n_labels - 1)]
+    values.append({"value": "ORG_REG", "count": floor + 1})
+    entry = {
+        "name": "Node",
+        "type": "document",
+        "count": 100_000,
+        "candidate_type_fields": ["type"],
+        "sample_field_value_counts": {"type": values},
+        "sample_field_distinct_counts": {"type": distinct if distinct is not None else n_labels},
+    }
+    return {"version": 2, "min_type_value_count": floor, "collections": [entry], "graphs": []}
+
+
+def test_full_label_set_maps_every_label_without_raising_top_k():
+    # The floor alone unlocks the full vocabulary — no ``sample_value_top_k`` is
+    # set, and the field has far more than the default 32-distinct bound.
+    out = infer_baseline_from_snapshot(_full_set_snapshot(n_labels=40))
+    ents = out["physicalMapping"]["entities"]
+    assert len(ents) == 40
+    # The low-count real label a top-20 cap would have dropped now maps...
+    assert ents["ORGREG"]["typeValue"] == "ORG_REG"
+    assert ents["ORGREG"]["aliases"] == ["ORG_REG"]
+    # ...and a Cypher author writing :ORG_REG resolves it through the index.
+    analysis = {
+        "conceptualSchema": out["conceptualSchema"],
+        "physicalMapping": out["physicalMapping"],
+        "metadata": {},
+    }
+    index = build_cypher_resolution_index(analysis)
+    assert index["entities"]["ORGREG"]["aliases"] == ["ORG_REG"]
+
+
+def test_full_label_set_reports_subfloor_drops_as_caps():
+    # distinct (50) exceeds the 40 kept labels — the sub-floor junk is reported
+    # as a cap (non-silent), while every real label still maps.
+    snap = _full_set_snapshot(n_labels=40, distinct=50)
+    snap["collections"][0]["sample_field_value_overflow"] = {
+        "type": [{"value": "gibberish_a", "count": 1}, {"value": "gibberish_b", "count": 1}]
+    }
+    out = infer_baseline_from_snapshot(snap)
+    assert len(out["physicalMapping"]["entities"]) == 40
+    caps = out["entityTypeCaps"]
+    assert caps and caps[0]["dropped"] == 10
+    assert caps[0]["droppedValuesTruncated"] is True
+
+
+def test_full_label_set_off_by_default():
+    # Same 40-label field, but no floor and no raised top_k → rejected for
+    # cardinality and collapsed to one entity per collection (unchanged behaviour).
+    snap = _full_set_snapshot(n_labels=40)
+    del snap["min_type_value_count"]
+    out = infer_baseline_from_snapshot(snap)
+    assert list(out["physicalMapping"]["entities"]) == ["Node"]
+
+
 def test_redaction_masks_overflow_values_and_new_field_name_keys():
     snapshot = _capped_snapshot()
     opts = RedactionOptions(mask_field_values=True)
@@ -219,3 +286,20 @@ def test_redaction_masks_overflow_values_and_new_field_name_keys():
     assert "type" not in entry["sample_field_distinct_counts"]
     assert "type" not in entry["sample_field_value_overflow"]
     assert name_map["type"] in entry["sample_field_value_overflow"]
+
+
+# ── Reserved-word guard for the discriminator COLLECT query ─────────────
+
+
+def test_discriminator_collect_quotes_reserved_word_distinct():
+    # ``distinct`` is an AQL reserved word; as a bare object key it is a hard
+    # syntax error on real ArangoDB (ERR 1501), which the COLLECT helper's
+    # try/except silently swallows -> zero discriminators ever detected. The
+    # FakeDB golden tests don't parse AQL, so only this guards the quoting.
+    import inspect
+
+    from schema_analyzer import snapshot
+
+    src = inspect.getsource(snapshot._detect_type_fields_via_collect)
+    assert '"distinct":' in src
+    assert "{distinct:" not in src

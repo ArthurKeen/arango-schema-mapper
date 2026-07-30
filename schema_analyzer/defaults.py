@@ -35,6 +35,21 @@ SAMPLE_VALUE_TOP_K: int = 20
 # silent. Bounds snapshot bloat on high-cardinality candidate fields.
 SAMPLE_VALUE_OVERFLOW_K: int = 50
 
+# LPG full-label-set mode. A labeled property graph carries its entire label
+# vocabulary in ONE discriminator field (``type``), so the top-K value cap
+# (``SAMPLE_VALUE_TOP_K``) silently drops real labels and disables label-rooted
+# queries. When ``min_type_value_count > 0`` the snapshot keeps EVERY distinct
+# discriminator value whose document count is >= the floor (unbounded by top-K,
+# bounded only by ``FULL_LABEL_SET_HARD_CAP``), filtering out only values that
+# don't look like labels. Default 0 = off (top-K behaviour preserved exactly).
+MIN_TYPE_VALUE_COUNT: int = 0
+# Safety ceiling on the number of distinct discriminator values kept in
+# full-label-set mode, so a pathological free-text field cannot return an
+# unbounded row set. Doubles as the discriminator-acceptance bound in that mode
+# (see ``type_detection._passes_distribution_shape``). Values beyond it spill to
+# the reported ``entityTypeCaps`` / ``relationshipTypeCaps``.
+FULL_LABEL_SET_HARD_CAP: int = 10_000
+
 # Cache
 DEFAULT_CACHE_DIR: str = ".schema-analyzer-cache"
 # Stamped into every cache payload's ``_cache`` block; entries carrying a

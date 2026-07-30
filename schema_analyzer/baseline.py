@@ -4,6 +4,7 @@ from typing import Any
 
 from .conceptual import ConceptualSchema
 from .defaults import (
+    FULL_LABEL_SET_HARD_CAP,
     MAX_TYPE_FIELD_DISTINCT_VALUES,
     SAMPLE_VALUE_TOP_K,
     UNRESOLVED_ENDPOINT,
@@ -26,8 +27,13 @@ def _snapshot_max_distinct(snapshot: dict[str, Any]) -> int:
 
     Scales with the snapshot's ``sample_value_top_k`` so a caller who raised
     the value-sampling cap (``max_entity_types``) doesn't get the field
-    rejected for exceeding the default 32-distinct-value bound.
+    rejected for exceeding the default 32-distinct-value bound. A full-label-set
+    snapshot (``min_type_value_count`` > 0) accepts the high-cardinality
+    discriminator outright so every above-floor label maps.
     """
+    floor = snapshot.get("min_type_value_count")
+    if isinstance(floor, int) and floor > 0:
+        return FULL_LABEL_SET_HARD_CAP
     top_k = snapshot.get("sample_value_top_k")
     if not isinstance(top_k, int) or top_k <= 0:
         top_k = SAMPLE_VALUE_TOP_K
