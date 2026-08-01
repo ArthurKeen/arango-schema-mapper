@@ -108,6 +108,18 @@ transparent** (see `docs/cypher-vocabulary-fidelity-bug-report.md` issue #2):
   with the raised cap. LLM-egress redaction masks the new snapshot keys the
   same way as their top-K counterparts.
 
+For a labeled property graph whose full label vocabulary lives in a single
+discriminator field, callers can pass `min_type_value_count > 0` (**full-label-set
+mode**) to `snapshot_physical_schema` / `analyze_physical_schema`. The snapshot
+then retains **every** distinct discriminator value whose observed count meets the
+floor — rather than only the top-K — so label-rooted queries resolve against the
+complete vocabulary; the floor guards against a pathological free-text field
+returning unbounded classes. **Implementation**: `snapshot.py`
+(`min_type_value_count` parameter), threaded via the analyzer; floor default in
+`defaults.py`. _Shipped alongside a fix to a reserved-word `COLLECT` bug
+(unquoted `distinct` object key) that had silently disabled discriminator
+detection against a live database._
+
 The automatic discriminator heuristic must be **overridable**: on a pure-PG schema
 (one collection per type) whose collections carry a plausible-looking but
 non-discriminating field (e.g. a high-cardinality `region` attribute), auto
@@ -461,6 +473,17 @@ adapter.
 > tool; named-graph membership annotation (`metadata.graphMembership` +
 > per-entry `graphs`) and optional `graphScope` analysis scoping. Still future:
 > SPARQL/SQL *query generation* (§6.4) and OWL reasoner integration (§6.3).
+
+**CSI conceptual naming (CDF CC-12) — _shipped_.** The CSI export applies OWL
+naming to the **conceptual** layer by default (`to_csi(owl_naming=True)`): entity
+names become singular PascalCase, and property and relationship names lowerCamel.
+Physical collection/field names are never renamed; each renamed conceptual
+property records its stored realization at
+`arangoPhysicalMapping.entities.<E>.properties.<name>.field`, so a transpiler can
+resolve conceptual → physical names. `validate_csi` enforces the naming contract
+unless `naming=False`, and `to_csi` accepts override maps for irregular singulars.
+**Implementation**: `csi/naming.py` (`apply_owl_naming`), `csi/__init__.py`
+(`to_csi` / `validate_csi`).
 
 #### **6.1. Additional Mapping Styles**
 - `TRIPLE` — _Shipped in 0.7.0_ as an additive annotation
