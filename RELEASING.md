@@ -74,18 +74,38 @@ python -m twine check --strict dist/*
 This produces `dist/arangodb_schema_analyzer-<version>-py3-none-any.whl` and
 `dist/arangodb_schema_analyzer-<version>.tar.gz`.
 
-## Manual upload (emergency / fallback)
+## Local publish from `.env` (fallback)
 
-Only if Trusted Publishing is unavailable:
+Trusted Publishing (OIDC) via the tag-triggered workflow is the recommended
+path and needs no credentials. If you prefer to publish from your machine
+(e.g. Trusted Publishing is unavailable, or the trusted-publisher config is
+mid-migration), use the helper script, which reads a PyPI API token from the
+gitignored `.env`:
+
+```bash
+# .env (never committed — see .env.example):
+#   PYPI_TOKEN=pypi-...          # create at https://pypi.org/manage/account/token/
+#   TESTPYPI_TOKEN=pypi-...      # optional, separate TestPyPI account, for --test
+
+scripts/publish.sh --check   # build + `twine check --strict`, no upload
+scripts/publish.sh --test    # upload to TestPyPI  (uses TESTPYPI_TOKEN)
+scripts/publish.sh           # upload to PyPI      (uses PYPI_TOKEN)
+```
+
+The token is read from `.env` without sourcing the file and is passed to
+`twine` only via the upload subprocess's environment (never printed, never in
+`~/.pypirc`, never committed). `.env` is gitignored; keep it that way.
+
+### Manual upload (no script)
 
 ```bash
 python -m pip install --upgrade twine
-python -m twine upload dist/*            # PyPI (prompts for API token)
-python -m twine upload -r testpypi dist/*  # TestPyPI
+python -m twine upload dist/*               # PyPI (username __token__, token as password)
+python -m twine upload -r testpypi dist/*   # TestPyPI
 ```
 
-Store the token in `~/.pypirc` **or** via the `TWINE_PASSWORD` env var — never
-in the repo.
+Store the token in `~/.pypirc` **or** via the `TWINE_USERNAME=__token__` /
+`TWINE_PASSWORD` env vars — never in the repo.
 
 ## Versioning
 
