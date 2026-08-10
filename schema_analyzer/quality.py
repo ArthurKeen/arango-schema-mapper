@@ -136,7 +136,14 @@ def compute_grounding_metrics(
     entity_names = _entity_names(conceptual)
     mapping_entities = physical_mapping.get("entities")
     mapped_entity_keys = set(mapping_entities.keys()) if isinstance(mapping_entities, dict) else set()
-    unmapped_entities = sorted(n for n in entity_names if n not in mapped_entity_keys)
+
+    # A synthesized abstract class has no physical mapping *by design* — the absent mapping
+    # is precisely what marks it as not directly queryable (PRD §6.3). Counting it as
+    # ungrounded would penalise the analyzer for discovering a taxonomy.
+    abstract_names = {
+        e.get("name") for e in (conceptual.get("entities") or []) if isinstance(e, dict) and e.get("abstract") is True
+    }
+    unmapped_entities = sorted(n for n in entity_names if n not in mapped_entity_keys and n not in abstract_names)
 
     return {
         "mappedCollectionCount": len(mapped),

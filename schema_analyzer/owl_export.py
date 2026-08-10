@@ -41,26 +41,49 @@ def _cardinality_by_relationship(data: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def _subclass_edges(physical_mapping: dict[str, Any]) -> list[tuple[str, str]]:
-    """(subclass_entity, family_name) pairs derived from shardFamilies.
+def _subclass_edges(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """``(subclass, superclass)`` pairs from every source that proposes subsumption.
 
-    Each member of a structurally-identical shard family is modelled as an
-    ``rdfs:subClassOf`` the synthesized family class.
+    Two sources today, and the function is shaped to take more:
+
+    * **shard families** — each member of a structurally-identical group is modelled as an
+      ``rdfs:subClassOf`` the synthesized family class. This is *physical duplication*, not
+      conceptual subsumption, and was the only source until abstraction discovery landed.
+    * **``conceptualSchema.subClassOfProposals``** — genuine taxonomy from
+      ``conceptual-taxonomy`` (PRD §6.3): discriminator values, sibling abstraction via
+      formal concept analysis, and shared-key specialization.
+
+    Deduplicated, since a class can be proposed by more than one mechanism.
     """
-    families = physical_mapping.get("shardFamilies")
     edges: list[tuple[str, str]] = []
-    if not isinstance(families, list):
-        return edges
-    for fam in families:
-        if not isinstance(fam, dict):
-            continue
-        fam_name = fam.get("name")
-        members = fam.get("members")
-        if not isinstance(fam_name, str) or not fam_name or not isinstance(members, list):
-            continue
-        for m in members:
-            if isinstance(m, dict) and isinstance(m.get("entity"), str) and m["entity"]:
-                edges.append((m["entity"], fam_name))
+    seen: set[tuple[str, str]] = set()
+
+    def add(sub: Any, sup: Any) -> None:
+        if isinstance(sub, str) and sub and isinstance(sup, str) and sup and sub != sup and (sub, sup) not in seen:
+            seen.add((sub, sup))
+            edges.append((sub, sup))
+
+    physical_mapping = data.get("physicalMapping") or {}
+    families = physical_mapping.get("shardFamilies")
+    if isinstance(families, list):
+        for fam in families:
+            if not isinstance(fam, dict):
+                continue
+            fam_name = fam.get("name")
+            members = fam.get("members")
+            if not isinstance(fam_name, str) or not fam_name or not isinstance(members, list):
+                continue
+            for m in members:
+                if isinstance(m, dict):
+                    add(m.get("entity"), fam_name)
+
+    conceptual = data.get("conceptualSchema") or {}
+    proposals = conceptual.get("subClassOfProposals")
+    if isinstance(proposals, list):
+        for proposal in proposals:
+            if isinstance(proposal, dict):
+                add(proposal.get("subClass"), proposal.get("superClass"))
+
     return edges
 
 
@@ -136,10 +159,14 @@ def export_conceptual_model_as_owl_turtle(
                     lines.append(f'{iri} phys:typeValue "{_ttl_escape(str(mapping["typeValue"]))}" .')
             lines.append("")
 
-    # Class hierarchy from shard families (rdfs:subClassOf)
-    subclass_edges = _subclass_edges(pm)
+    # Class hierarchy — shard families plus discovered abstractions (rdfs:subClassOf)
+    subclass_edges = _subclass_edges(data)
     if subclass_edges:
-        family_names = sorted({fam for _, fam in subclass_edges})
+        declared = {e["name"] for e in entities if isinstance(e, dict) and isinstance(e.get("name"), str)}
+        # Only mint a class for a superclass that is not already an entity. A specialization
+        # parent is a real collection, and a synthesized abstraction is merged into
+        # `entities` — declaring either again would duplicate its label.
+        family_names = sorted({fam for _, fam in subclass_edges if fam not in declared})
         for fam in family_names:
             fam_iri = f":{_sanitize_iri_local(fam)}"
             lines.append(f"{fam_iri} a owl:Class ;")
@@ -250,7 +277,7 @@ def export_conceptual_model_as_jsonld(
         class_nodes[name] = node
         graph.append(node)
 
-    for member, fam in _subclass_edges(pm):
+    for member, fam in _subclass_edges(data):
         fam_id = _sanitize_iri_local(fam)
         if fam not in class_nodes:
             fam_node = {"@id": fam_id, "@type": "owl:Class", "rdfs:label": fam}

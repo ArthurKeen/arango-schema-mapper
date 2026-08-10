@@ -49,6 +49,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Class-abstraction discovery (PRD §6.3). Shared with relational-schema-analyzer so the
+# two cannot drift on the sharedProperties/partialProperties split, which is a correctness
+# boundary rather than a stylistic one. Optional: absent it, discovery is skipped.
+taxonomy = ["conceptual-taxonomy>=0.1.1"]
 openai = ["openai>=1.0.0"]
 anthropic = ["anthropic>=0.25.0"]
 openrouter = []  # uses stdlib urllib; listed for feature discoverability
