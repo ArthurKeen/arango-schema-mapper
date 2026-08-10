@@ -297,3 +297,23 @@ DEFAULT_EVAL_DATABASE: str = "schema_analyzer_eval"
 TOOL_ERROR_EXIT_CODE: int = 2
 FALLBACK_LIBRARY_VERSION: str = "0.0.0-dev"
 DEFAULT_EXPORT_TARGET: str = "cypher"
+
+
+# ── Foreign-key inference (PRD §6.2) ────────────────────────────────────────
+# Ported from ``relational_schema_analyzer.fk_inference.InferenceOptions``. Kept
+# byte-comparable with RSA's values on purpose: the two detectors share a threshold
+# rather than drifting apart, which also settles §6.4.1's open FK-inference question.
+
+FK_MIN_CONFIDENCE = 0.4
+FK_GENERIC_KEY_NAMES = frozenset({"id", "uuid", "pk", "key"})
+FK_MAX_CANDIDATES_PER_FIELD = 3
+FK_ALLOW_COMPOSITE = True
+FK_OVERLAP_VETO_ON_ZERO = True
+
+# Distinct values sampled from the referencing field per containment probe.
+FK_PROBE_SAMPLE_SIZE = 50
+# Hard cap on probes per analysis run. Containment probing is the first cross-collection
+# DB cost in this analyzer and scales with candidate count, not collection count; on
+# exhaustion the run reports `metadata.foreignKeyStatus = "degraded"` rather than
+# silently truncating.
+FK_MAX_PROBES = 200
