@@ -265,12 +265,23 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
                 graph_scope=graph_scope,
             )
 
+            raw_strategy = analysis_options.get("entityStrategy")
+            if raw_strategy is not None and raw_strategy not in ("auto", "collection"):
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "analysisOptions.entityStrategy must be 'auto' or "
+                        f"'collection', got {raw_strategy!r}",
+                    },
+                }
             analysis = analyzer.analyze_physical_schema(
                 db,
                 timeout_ms=int(analysis_options.get("timeoutMs") or DEFAULT_TIMEOUT_MS),
                 sample_limit_per_collection=sample_limit,
                 include_samples_in_snapshot=include_samples,
                 use_cache=bool(analysis_options.get("useCache", True)),
+                entity_strategy=raw_strategy or "auto",
                 _snapshot=snapshot,
             )
 

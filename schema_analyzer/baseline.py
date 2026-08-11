@@ -221,6 +221,22 @@ def _extract_properties(
         fields = observed["by_type"].get(type_value, [])
     elif isinstance(observed.get("fields"), list):
         fields = observed["fields"]
+    elif isinstance(observed.get("by_type"), dict):
+        # collection_per_entity over a collection the snapshot profiled by
+        # discriminator: the entity IS the whole collection, so its property
+        # set is the union of every type bucket (sorted for determinism).
+        # Without this, a heterogeneous collection yields an entity with NO
+        # properties — Document lost accountId and broke the join contract.
+        # The discriminator column itself (factored out of the buckets, e.g.
+        # Document.source) is an observed field too and must survive.
+        union: set[str] = set()
+        for bucket in observed["by_type"].values():
+            if isinstance(bucket, list):
+                union.update(f for f in bucket if isinstance(f, str))
+        candidates = col.get("candidate_type_fields")
+        if isinstance(candidates, list):
+            union.update(f for f in candidates if isinstance(f, str))
+        fields = sorted(union)
 
     if not isinstance(fields, list):
         return []

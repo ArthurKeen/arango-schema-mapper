@@ -660,3 +660,35 @@ def test_collection_strategy_default_is_auto_no_behavior_change():
     d = {e["name"] for e in default["conceptualSchema"]["entities"]}
     a = {e["name"] for e in explicit["conceptualSchema"]["entities"]}
     assert d == a == {"Movie", "Person"}
+
+
+def test_collection_per_entity_unions_by_type_properties():
+    """A heterogeneous collection profiled by discriminator must not lose its
+    properties under collection_per_entity: the entity IS the collection, so
+    its property set is the union of every type bucket. Regression: Document
+    came back with zero properties (losing the accountId join key) because
+    the snapshot stored only observed_fields.by_type."""
+    snapshot = {
+        "version": 1,
+        "collections": [
+            {
+                "name": "documents",
+                "type": "document",
+                "inferred_entity_type": "Document",
+                "candidate_type_fields": ["source"],
+                "observed_fields": {
+                    "by_type": {
+                        "email": ["account_id", "citable_url", "subject"],
+                        "slack": ["account_id", "citable_url", "channel"],
+                    }
+                },
+            }
+        ],
+        "graphs": [],
+    }
+    out = infer_baseline_from_snapshot(snapshot, collection_per_entity=True)
+    ents = {e["name"]: e for e in out["conceptualSchema"]["entities"]}
+    assert set(ents) == {"Document"}
+    props = [p["name"] for p in ents["Document"]["properties"]]
+    assert props == ["account_id", "channel", "citable_url", "source", "subject"]  # sorted union + discriminator
+    assert out["physicalMapping"]["entities"]["Document"]["style"] == "COLLECTION"
