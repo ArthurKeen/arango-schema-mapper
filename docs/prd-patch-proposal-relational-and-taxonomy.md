@@ -1,7 +1,10 @@
 # Proposed PRD patch — relational physical patterns in ArangoDB, and abstraction discovery
 
 **Target:** `arango-schema-analyzer/docs/PRD.md`
-**Status:** PROPOSED — requires acceptance via `/prd-sync` (per CLAUDE.md: PRD patches are never auto-applied)
+**Status:** MERGED (2026-08-12) — accepted via `/prd-sync` and applied to `docs/PRD.md`
+(§3.3 `FOREIGN_KEY`/`JOIN_TABLE` styles, §6.2 foreign-key inference, §6.3 subClassOf
+export-vs-discovery split, §7 `conceptual-taxonomy` optional dep). Retained as the design
+rationale record. (`prd_patches` DB entries deferred: shared-memory MCP was read-only at merge time.)
 
 **Companions:**
 - `conceptual-taxonomy/docs/SPEC.md` — the shared abstraction-discovery library

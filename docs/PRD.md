@@ -70,6 +70,15 @@ The system must produce a **conceptual → physical mapping** describing how eac
 | `LABEL` | Entity | Shared collection filtered by `typeField == typeValue` |
 | `DEDICATED_COLLECTION` | Relationship | One edge collection per relationship type |
 | `GENERIC_WITH_TYPE` | Relationship | Shared edge collection filtered by `typeField == typeValue` |
+| `FOREIGN_KEY` | Relationship | Relationship carried by a scalar attribute on the source document that references a target document's key (SQL-style, never enforced by ArangoDB); compiled as a keyed document lookup, not an edge traversal. |
+| `JOIN_TABLE` | Relationship | Relationship reified as a document collection linking two entities (SQL-style junction table), optionally carrying its own properties; compiled as a two-hop traversal for a conceptually one-hop relationship. |
+
+The `FOREIGN_KEY` and `JOIN_TABLE` relationship styles are emitted by
+`PhysicalMapping.aql_relationship_traversal()` in `mapping.py` (`_aql_foreign_key`,
+`_aql_join_table`), preserving the injection-safe `{query, bind_vars, edge_variable}`
+contract; a `FOREIGN_KEY` mapping is produced from a detected reference by
+`InferredForeignKey.to_mapping()` in `fk_inference.py` (see §6.2). These names are
+shared deliberately with `relational-schema-analyzer` so the two dialects converge.
 
 `LABEL`-style entity mappings must be **label-faithful**: when the PascalCase
 entity name is lossy relative to the raw discriminator value that appears in
@@ -184,7 +193,15 @@ Operations: `analyze`, `snapshot`, `export`, `docs`, `owl`.
 
 All requests and responses are validated against the JSON Schema. Failures return structured `{ "ok": false, "error": { "code": "...", "message": "..." } }` responses for both expected errors (`SchemaAnalyzerError`) and unexpected exceptions.
 
-**Implementation**: `tool.py` (entrypoint), `tool_contract_v1.py` (schema loading and validation).
+Requests carry an `analysisOptions` object (defined in `request.schema.json`). Among
+its fields, `analysisOptions.entityStrategy` (`"auto"` | `"collection"`, default
+`"auto"`) exposes the §3.4 discriminator override at the tool boundary: `"collection"`
+maps one entity per document collection and one relationship per edge collection,
+skipping discriminator inference. `tool.py` validates the value and returns
+`{ "ok": false, "error": { "code": "INVALID_REQUEST" } }` for any other value before
+analysis runs.
+
+**Implementation**: `tool.py` (entrypoint + `analysisOptions.entityStrategy` validation/threading), `tool_contract_v1.py` (schema loading and validation), `tool_contract/v1/request.schema.json` (`entityStrategy` enum).
 
 #### **3.9. CLI**
 
@@ -407,7 +424,7 @@ Tunable defaults are centralized in `defaults.py`:
 
 #### **4.7. Tool contract fidelity**
 
-Fields in `docs/tool-contract/v1/request.schema.json` **must either be implemented** in `tool.py` / `AgenticSchemaAnalyzer` **or be explicitly marked deferred** in this PRD and in schema descriptions. Implemented: **`connection.verifyTls`** (maps to python-arango `verify_override`), **`analysisOptions.maxRepairAttempts`**, **`llm.systemPrompt`**, **`llm.promptVersion`** (participates in LLM cache key with the effective system prompt), **`domainContext`** (caller-supplied domain priors → `AgenticSchemaAnalyzer.domain_context`), and redaction modes (`analysisOptions.redaction`). Drift between schema and code undermines agent workflows that rely on the contract.
+Fields in `docs/tool-contract/v1/request.schema.json` **must either be implemented** in `tool.py` / `AgenticSchemaAnalyzer` **or be explicitly marked deferred** in this PRD and in schema descriptions. Implemented: **`connection.verifyTls`** (maps to python-arango `verify_override`), **`analysisOptions.maxRepairAttempts`**, **`llm.systemPrompt`**, **`llm.promptVersion`** (participates in LLM cache key with the effective system prompt), **`domainContext`** (caller-supplied domain priors → `AgenticSchemaAnalyzer.domain_context`), **`analysisOptions.entityStrategy`** (`auto` | `collection`, validated in `tool.py` → `analyze_physical_schema(entity_strategy=…)`; see §3.4/§3.8), and redaction modes (`analysisOptions.redaction`). Drift between schema and code undermines agent workflows that rely on the contract.
 
 ---
 
@@ -497,6 +514,20 @@ unless `naming=False`, and `to_csi` accepts override maps for irregular singular
   (denormalized properties on edges).
 
 #### **6.2. Enhanced Pattern Detection**
+- **Foreign-key inference (relationships carried by scalar attributes).**
+  _Shipped._ ArangoDB enforces no referential constraint, so a relationship
+  persisted as `Album.ArtistId → Artist._key` is invisible to edge-collection
+  introspection. `schema_analyzer/fk_inference.py` (`infer_foreign_keys`) detects
+  these: name-convention candidate generation (snake_case / camelCase / `_id`-shaped
+  values that name their target collection), type-compatibility gating, composite-key
+  folding, dedup, and a per-candidate confidence with an `evidence[]` list, governed
+  by `InferenceOptions` (defaults in `defaults.py`). Value-containment sampling is
+  **off by default**; when enabled it delegates to `ArangoValueSampler`
+  (`schema_analyzer/fk_sampler.py`) — one bounded AQL containment probe per candidate
+  under a hard `FK_MAX_PROBES` budget, surfacing `metadata.foreignKeyStatus =
+  "degraded"` with the count of unprobed candidates rather than truncating silently
+  (the §3.4 transparency rule). Detection is deterministic, read-only, and
+  LLM-independent; each confirmed reference is emitted as a `FOREIGN_KEY` mapping (§3.3).
 - RPT (RDF Topology) detection: `_triples` collections, `rdf:type` edges
 - GraphRAG template matching — _Shipped in 0.9.0_ as `metadata.graphRag`
   (`schema_analyzer/graphrag.py`): brand-agnostic detection of text chunks
@@ -641,7 +672,18 @@ unless `naming=False`, and `to_csi` accepts override maps for irregular singular
   `SHARD_FAMILY_DISCRIMINATOR_FIELDS`) live in `defaults.py`.
 
 #### **6.3. Richer OWL Support**
-- Class hierarchies (`rdfs:subClassOf`)
+- Class hierarchies (`rdfs:subClassOf`):
+  - **export** (Turtle + JSON-LD) — _Shipped in 0.7.0_ (`owl_export.py::_subclass_edges`, sourced from shard families).
+  - **discovery** — _Shipped_ via `schema_analyzer/taxonomy.py`, delegated to the
+    paradigm-neutral `conceptual-taxonomy` library (optional dependency; absent → no
+    abstraction discovery, not failure). The adapter supplies the two ArangoDB-specific
+    inputs — discriminator enumerations from `LABEL` mappings (`build_discriminators`)
+    and `_key`-containment ratios measured against the live database
+    (`measure_key_containment`) — and folds returned proposals in additively
+    (`merge_into_analysis`), synthesizing abstract classes that carry no
+    `physicalMapping` entry by design. Shard-family members are excluded so structural
+    duplication is not mistaken for subsumption. Containment measurement is opt-in for
+    the same cross-collection cost reason FK probing is (`metadata.taxonomyStatus`).
 - Property characteristics (`owl:functional`, `owl:inverseOf`)
 - Cardinality constraints
 - JSON-LD export format alongside Turtle
@@ -796,6 +838,8 @@ pending roadmap work**. Revisit only via an explicit scope change.
   extra exists only for feature discoverability)
 - `mcp ≥ 1.2.0` — MCP stdio server (`[mcp]` extra; enables
   `arangodb-schema-analyzer-mcp`)
+- `conceptual-taxonomy` — class-abstraction discovery (§6.3); when absent the
+  taxonomy discovery pass is skipped (no failure), leaving OWL export unaffected
 
 #### Dev
 - `pytest`, `pytest-cov`, `ruff`, `mypy`
