@@ -42,5 +42,10 @@ eval_report*.json
 eval_*.json
 
 .prd-drift-queue/
+.pattern-capture-queue/
 .claude/
 CLAUDE.md
+.no-drift-gate
+.cursor/.shared-memory-sessions/
+.cursor/hooks.json.pre-update.*
+.cursor/hooks/*.pre-update.*
