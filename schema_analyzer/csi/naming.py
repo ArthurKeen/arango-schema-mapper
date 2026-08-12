@@ -38,9 +38,7 @@ _ENTITY_RE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 _PROPERTY_RE = re.compile(r"^[a-z][A-Za-z0-9]*$")
 # Split camelCase / PascalCase / snake / kebab / space / acronym runs:
 # "HTTPServer" → HTTP, Server; "HAS_NAME" → HAS, NAME; "accountId" → account, Id.
-_SPLIT_RE = re.compile(
-    r"[A-Z]+(?=[A-Z][a-z])|[A-Z][a-z0-9]+|[A-Z]+|[a-z0-9]+"
-)
+_SPLIT_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z][a-z0-9]+|[A-Z]+|[a-z0-9]+")
 
 
 def _words(name: str) -> list[str]:
@@ -161,9 +159,7 @@ def apply_owl_naming(
     # Physical-mapping entity keys follow the conceptual rename; the physical
     # collection name stays what it is.
     if isinstance(phys_entities, dict) and entity_renames:
-        physical["entities"] = {
-            entity_renames.get(name, name): spec for name, spec in phys_entities.items()
-        }
+        physical["entities"] = {entity_renames.get(name, name): spec for name, spec in phys_entities.items()}
 
     # Relationships: lowerCamel the type; keys in the physical map follow.
     rel_renames: dict[str, str] = {}
@@ -181,9 +177,7 @@ def apply_owl_naming(
                 rel[endpoint] = entity_renames[val]
     phys_rels = physical.get("relationships")
     if isinstance(phys_rels, dict) and rel_renames:
-        physical["relationships"] = {
-            rel_renames.get(name, name): spec for name, spec in phys_rels.items()
-        }
+        physical["relationships"] = {rel_renames.get(name, name): spec for name, spec in phys_rels.items()}
 
     return doc
 
@@ -202,23 +196,17 @@ def naming_issues(csi: dict[str, Any]) -> list[str]:
             continue
         name = ent.get("name")
         if isinstance(name, str) and not _ENTITY_RE.match(name):
-            issues.append(
-                f"entity {name!r} violates CC-12 naming (expected singular PascalCase, e.g. 'UsageMetric')"
-            )
+            issues.append(f"entity {name!r} violates CC-12 naming (expected singular PascalCase, e.g. 'UsageMetric')")
         for prop in ent.get("properties") or []:
             if not isinstance(prop, dict):
                 continue
             p = prop.get("name")
             if isinstance(p, str) and not p.startswith("_") and not _PROPERTY_RE.match(p):
-                issues.append(
-                    f"property {name}.{p!r} violates CC-12 naming (expected lowerCamel, e.g. 'accountId')"
-                )
+                issues.append(f"property {name}.{p!r} violates CC-12 naming (expected lowerCamel, e.g. 'accountId')")
     for rel in conceptual.get("relationships") or []:
         if not isinstance(rel, dict):
             continue
         rtype = rel.get("type")
         if isinstance(rtype, str) and not _PROPERTY_RE.match(rtype):
-            issues.append(
-                f"relationship {rtype!r} violates CC-12 naming (expected lowerCamel, e.g. 'hasPart')"
-            )
+            issues.append(f"relationship {rtype!r} violates CC-12 naming (expected lowerCamel, e.g. 'hasPart')")
     return issues

@@ -121,9 +121,7 @@ def to_csi(
     if owl_naming:
         from .naming import apply_owl_naming
 
-        doc = apply_owl_naming(
-            doc, entity_overrides=entity_overrides, property_overrides=property_overrides
-        )
+        doc = apply_owl_naming(doc, entity_overrides=entity_overrides, property_overrides=property_overrides)
     return doc
 
 
