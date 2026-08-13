@@ -293,3 +293,9 @@ def merge_into_analysis(data: dict[str, Any], proposals: dict[str, Any] | None) 
     conceptual["abstractClasses"] = list(proposals.get("abstractClasses") or [])
     conceptual["subClassOfProposals"] = list(proposals.get("subClassOf") or [])
     return data
+
+
+#: Public aliases — `discover`/`merge_into_analysis` are unhelpfully generic at
+#: package scope, where they sit beside a dozen other analyzer entry points.
+discover_abstractions_for_analysis = discover
+merge_taxonomy_into_analysis = merge_into_analysis

@@ -275,6 +275,14 @@ def run_tool(request: dict[str, Any]) -> dict[str, Any]:
                         f"'collection', got {raw_strategy!r}",
                     },
                 }
+            # Relational-pattern and taxonomy enrichment (PRD §6.2 / §6.3). Both default
+            # off: candidate generation is snapshot-only, but the confirming probes are
+            # cross-collection database costs and a caller should opt into paying them.
+            analyzer.detect_foreign_keys = bool(analysis_options.get("detectForeignKeys") or False)
+            analyzer.sample_fk_overlap = bool(analysis_options.get("sampleForeignKeyOverlap") or False)
+            analyzer.discover_taxonomy = bool(analysis_options.get("discoverTaxonomy") or False)
+            analyzer.measure_key_containment = bool(analysis_options.get("measureKeyContainment") or False)
+
             analysis = analyzer.analyze_physical_schema(
                 db,
                 timeout_ms=int(analysis_options.get("timeoutMs") or DEFAULT_TIMEOUT_MS),

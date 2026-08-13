@@ -62,6 +62,9 @@ Sampler = Callable[[str, str, str, str], "float | None"]
 
 _ID_VALUE = re.compile(r"^[A-Za-z0-9_\-]+/[^/\s]+$")
 
+#: Recorded when the snapshot carries a field name but no value to type it from.
+UNKNOWN_TYPE = "unknown"
+
 _COMPATIBLE_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"integer", "float", "number"}),
     frozenset({"string"}),
@@ -380,9 +383,114 @@ def _make_candidate(
 
 
 def _types_compatible(a: str, b: str) -> bool:
-    if a == b:
+    # "unknown" is not a mismatch. The snapshot records field *names* without types unless
+    # document sampling was requested, and rejecting on absent information would silence the
+    # detector on the default code path rather than merely weaken it.
+    if a == b or UNKNOWN_TYPE in (a, b):
         return True
     return any(a in group and b in group for group in _COMPATIBLE_GROUPS)
+
+
+# ── snapshot adaptation ──────────────────────────────────────────────────────
+
+
+def _json_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, str):
+        return "string"
+    return UNKNOWN_TYPE
+
+
+def _observed_field_names(entry: dict[str, Any]) -> list[str]:
+    observed = entry.get("observed_fields")
+    if not isinstance(observed, dict):
+        return []
+    if isinstance(observed.get("fields"), list):
+        return [f for f in observed["fields"] if isinstance(f, str)]
+    names: set[str] = set()
+    for fields in (observed.get("by_type") or {}).values():
+        if isinstance(fields, list):
+            names.update(f for f in fields if isinstance(f, str))
+    return sorted(names)
+
+
+def _unique_single_fields(entry: dict[str, Any]) -> set[str]:
+    """Fields carrying a unique index — the 1:1 evidence §6.4.1 wants before a FK column."""
+    out: set[str] = set()
+    for index in entry.get("indexes") or []:
+        if not isinstance(index, dict) or not index.get("unique"):
+            continue
+        fields = index.get("fields")
+        if isinstance(fields, list) and len(fields) == 1 and isinstance(fields[0], str):
+            out.add(fields[0])
+    return out
+
+
+def collection_shapes_from_snapshot(snapshot: dict[str, Any]) -> dict[str, CollectionShape]:
+    """Adapt a physical snapshot to the detector's input.
+
+    Document collections only — an edge collection is already a relationship. Field types and
+    ``_id``-shaped values come from ``sample_documents``, which the snapshot carries only when
+    the caller asked for samples; without them the detector still runs on names and indexes,
+    it simply cannot use the value-shape signal.
+    """
+    shapes: dict[str, CollectionShape] = {}
+    for entry in snapshot.get("collections") or []:
+        if not isinstance(entry, dict) or entry.get("type") != "document":
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+
+        samples = [d for d in (entry.get("sample_documents") or []) if isinstance(d, dict)]
+        fields: dict[str, str] = {f: UNKNOWN_TYPE for f in _observed_field_names(entry)}
+        sample_values: dict[str, list[Any]] = {}
+        for doc in samples:
+            for key, value in doc.items():
+                if key in ("_id", "_rev"):
+                    continue
+                if fields.get(key, UNKNOWN_TYPE) == UNKNOWN_TYPE:
+                    fields[key] = _json_type(value)
+                sample_values.setdefault(key, []).append(value)
+
+        fields.setdefault("_key", "string")
+        shapes[name] = CollectionShape(
+            name=name,
+            fields=fields,
+            key_fields=["_key"],
+            unique_fields=_unique_single_fields(entry),
+            sample_values=sample_values,
+            count=int(entry.get("count") or 0),
+        )
+    return shapes
+
+
+def existing_edge_relationships(snapshot: dict[str, Any]) -> set[tuple[str, str]]:
+    """``(from, to)`` collection pairs already reachable via an edge collection.
+
+    An attribute duplicating one of these is denormalization, not a relationship the mapping
+    is missing.
+    """
+    pairs: set[tuple[str, str]] = set()
+    for entry in snapshot.get("collections") or []:
+        if not isinstance(entry, dict) or entry.get("type") != "edge":
+            continue
+        endpoints = entry.get("edge_endpoints")
+        if not isinstance(endpoints, dict):
+            continue
+        for block in endpoints.values():
+            if not isinstance(block, dict):
+                continue
+            for source in block.get("from_collections") or block.get("from") or []:
+                for target in block.get("to_collections") or block.get("to") or []:
+                    if isinstance(source, str) and isinstance(target, str):
+                        pairs.add((source, target))
+    return pairs
 
 
 def _find_composite_candidates(single: list[InferredForeignKey]) -> list[InferredForeignKey]:
@@ -449,6 +557,103 @@ def _apply_sampler(
         confidence=round(max(0.0, min(1.0, candidate.confidence + bump)), 3),
         evidence=[*candidate.evidence, f"value containment avg={average:.2f} ({len(scores)} sampled)"],
     )
+
+
+def apply_to_analysis(
+    data: dict[str, Any],
+    snapshot: dict[str, Any],
+    *,
+    sampler: Sampler | None = None,
+    options: InferenceOptions | None = None,
+) -> dict[str, Any]:
+    """Detect attribute-carried relationships and merge them into an analysis, in place.
+
+    Adds one ``FOREIGN_KEY`` entry to ``physicalMapping.relationships`` and one matching
+    entry to ``conceptualSchema.relationships`` per accepted candidate. Existing
+    relationships are never overwritten — a name collision is resolved by qualifying with
+    the referencing field rather than by replacing what is already there.
+
+    Returns a status block for ``metadata.foreignKeyStatus``.
+    """
+    conceptual = data.setdefault("conceptualSchema", {})
+    physical = data.setdefault("physicalMapping", {})
+    pm_entities = physical.get("entities") if isinstance(physical.get("entities"), dict) else {}
+
+    entity_by_collection: dict[str, str] = {}
+    for entity_name, mapping in pm_entities.items():
+        # LABEL entities share a collection, so a whole-collection reference cannot be
+        # attributed to any one of them. Only COLLECTION-style entities are addressable.
+        if isinstance(mapping, dict) and mapping.get("style") == "COLLECTION":
+            collection = mapping.get("collectionName")
+            if isinstance(collection, str):
+                entity_by_collection[collection] = entity_name
+
+    shapes = collection_shapes_from_snapshot(snapshot)
+    candidates = infer_foreign_keys(
+        shapes,
+        options=options,
+        sampler=sampler,
+        existing_relationships=existing_edge_relationships(snapshot),
+    )
+
+    pm_rels = physical.setdefault("relationships", {})
+    cs_rels = conceptual.setdefault("relationships", [])
+    taken: set[str] = set(pm_rels) | {
+        str(r["type"]) for r in cs_rels if isinstance(r, dict) and isinstance(r.get("type"), str)
+    }
+
+    added = 0
+    unmapped = 0
+    for candidate in candidates:
+        from_entity = entity_by_collection.get(candidate.collection)
+        to_entity = entity_by_collection.get(candidate.foreign_collection)
+        if from_entity is None or to_entity is None:
+            unmapped += 1
+            continue
+
+        rel_type = _relationship_type(to_entity, candidate.fields, taken)
+        taken.add(rel_type)
+        pm_rels[rel_type] = candidate.to_mapping()
+        cs_rels.append(
+            {
+                "type": rel_type,
+                "fromEntity": from_entity,
+                "toEntity": to_entity,
+                "properties": [],
+                "source": "baseline",
+            }
+        )
+        added += 1
+
+    status: dict[str, Any] = {
+        "status": "ok",
+        "candidates": len(candidates),
+        "added": added,
+        "sampled": bool(sampler is not None and (options or InferenceOptions()).sample_overlap),
+    }
+    if unmapped:
+        # Never silent: a candidate whose endpoint has no COLLECTION-style entity is dropped,
+        # and a consumer comparing counts deserves to know why (PRD §3.4 transparency rule).
+        status["unmappedEndpoints"] = unmapped
+    if added:
+        patterns = data.setdefault("metadata", {}).setdefault("detectedPatterns", [])
+        if "attribute_foreign_key" not in patterns:
+            patterns.append("attribute_foreign_key")
+    return status
+
+
+def _relationship_type(to_entity: str, fields: list[str], taken: set[str]) -> str:
+    """``HAS_ARTIST``, qualified by field only when two references share a target."""
+    base = f"HAS_{singularize(to_entity).upper()}"
+    if base not in taken:
+        return base
+    qualified = f"{base}_VIA_{fields[0].upper()}"
+    if qualified not in taken:
+        return qualified
+    index = 2
+    while f"{qualified}_{index}" in taken:
+        index += 1
+    return f"{qualified}_{index}"
 
 
 def _dedupe(candidates: list[InferredForeignKey]) -> list[InferredForeignKey]:

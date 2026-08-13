@@ -87,6 +87,11 @@ class AnalysisMetadata(BaseModel):
     # top-level key. Both absent when the snapshot has no user collections.
     multitenancy: dict[str, Any] | None = Field(default=None, alias="multitenancy")
     multitenancy_status: str | None = Field(default=None, alias="multitenancyStatus")
+    # Attribute-carried relationship detection (PRD §6.2) and class-abstraction
+    # discovery (PRD §6.3). Absent when the corresponding flag was not set — which is
+    # how a consumer tells "ran and found nothing" from "never ran".
+    foreign_key_status: dict[str, Any] | None = Field(default=None, alias="foreignKeyStatus")
+    taxonomy_status: dict[str, Any] | None = Field(default=None, alias="taxonomyStatus")
     # Populated by the vertex-centric-index detector (vci.py, PRD §6.1/§6.2).
     # Summary of which relationships carry a VCI pattern; per-relationship
     # detail lives under physicalMapping.relationships[type].vci. Absent when

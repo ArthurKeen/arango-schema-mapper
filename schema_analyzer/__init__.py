@@ -9,6 +9,13 @@ from .csi import CSI_VERSION, from_csi, to_csi
 from .diff import diff_analyses
 from .docs import generate_schema_docs
 from .exports import build_cypher_resolution_index, export_mapping
+from .fk_inference import (
+    CollectionShape,
+    InferenceOptions,
+    InferredForeignKey,
+    infer_foreign_keys,
+)
+from .fk_sampler import ArangoValueSampler
 from .incremental import assess_change_state, refresh_statistics
 from .mapping import PhysicalMapping
 from .metric_history import (
@@ -28,6 +35,7 @@ from .snapshot import (
     fingerprint_physical_schema,
     fingerprint_physical_shape,
 )
+from .taxonomy import discover_abstractions_for_analysis, merge_taxonomy_into_analysis
 from .tool import run_tool
 
 __all__ = [
@@ -38,6 +46,13 @@ __all__ = [
     "ConceptualSchema",
     "PhysicalMapping",
     "diff_analyses",
+    "CollectionShape",
+    "InferenceOptions",
+    "InferredForeignKey",
+    "infer_foreign_keys",
+    "ArangoValueSampler",
+    "discover_abstractions_for_analysis",
+    "merge_taxonomy_into_analysis",
     "assess_change_state",
     "refresh_statistics",
     "RedactionOptions",

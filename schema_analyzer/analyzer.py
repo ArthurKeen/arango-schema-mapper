@@ -283,8 +283,23 @@ class AgenticSchemaAnalyzer:
     # or dict {domain, description, entities, relationships}. When set it
     # overrides automatic domain detection for LLM prompt priors.
     domain_context: dict[str, Any] | str | None = None
+    # ── Relational-pattern and taxonomy enrichment (PRD §6.2 / §6.3) ──────────
+    # Detect relationships carried by a scalar attribute rather than an edge collection.
+    # Candidate generation is snapshot-only; ``sample_fk_overlap`` additionally confirms
+    # each candidate with a value-containment probe, which is the first cross-collection
+    # database cost here and therefore separately gated.
+    detect_foreign_keys: bool = False
+    sample_fk_overlap: bool = False
+    # Discover class abstractions (rdfs:subClassOf) via the shared conceptual-taxonomy
+    # library. Deterministic and snapshot-only unless ``measure_key_containment`` is set,
+    # which probes for the Arango analogue of class-table inheritance.
+    discover_taxonomy: bool = False
+    measure_key_containment: bool = False
 
     def __post_init__(self) -> None:
+        # Set for the duration of an analysis so enrichment can probe; the analyzer itself
+        # stays stateless between runs.
+        self._db: Any = None
         if isinstance(self.cache, dict) or self.cache is None:
             self.cache = cache_from_config(self.cache if isinstance(self.cache, dict) else None)
 
@@ -393,7 +408,7 @@ class AgenticSchemaAnalyzer:
             stats_holder: dict[str, Any] = {
                 "physicalMapping": baseline.get("physicalMapping", {}),
                 "conceptualSchema": baseline.get("conceptualSchema", {}),
-                "metadata": {},
+                "metadata": {"detectedPatterns": list(baseline.get("detectedPatterns", []))},
             }
             _apply_sharding_profile(stats_holder, snapshot)
             _apply_shard_families(stats_holder)
@@ -403,8 +418,19 @@ class AgenticSchemaAnalyzer:
             _apply_graphrag(stats_holder, snapshot)
             _apply_graph_membership(stats_holder, snapshot)
             _apply_statistics(db, stats_holder, snapshot)
-            baseline_conceptual = ConceptualSchema.from_json(baseline.get("conceptualSchema", {})).to_json()
-            baseline_physical = PhysicalMapping.from_json(baseline.get("physicalMapping", {})).to_json()
+            # Enrichment must run on this path too. It is the *default* path — no LLM
+            # provider configured — so hooking only the LLM path in `_build_result` would
+            # leave the capability unreachable for most callers.
+            baseline_fk_status = self._detect_attribute_relationships(stats_holder, snapshot)
+            baseline_taxonomy_status = self._discover_taxonomy(stats_holder)
+
+            baseline_conceptual = ConceptualSchema.from_json(stats_holder.get("conceptualSchema", {})).to_json()
+            baseline_physical = PhysicalMapping.from_json(stats_holder.get("physicalMapping", {})).to_json()
+            # ConceptualSchema keeps only entities/relationships/properties, so the
+            # abstraction blocks are carried across explicitly.
+            for key in ("abstractClasses", "subClassOfProposals"):
+                if stats_holder.get("conceptualSchema", {}).get(key):
+                    baseline_conceptual[key] = stats_holder["conceptualSchema"][key]
             baseline_payload = {
                 "conceptualSchema": baseline_conceptual,
                 "physicalMapping": baseline_physical,
@@ -419,10 +445,12 @@ class AgenticSchemaAnalyzer:
                 confidence=BASELINE_NO_LLM_CONFIDENCE,
                 timestamp=now_iso(),
                 analyzed_collection_counts={"documentCollections": doc_count, "edgeCollections": edge_count},
-                detected_patterns=baseline.get("detectedPatterns", []),
+                detected_patterns=list(stats_holder.get("metadata", {}).get("detectedPatterns", [])),
                 entity_type_caps=baseline.get("entityTypeCaps") or None,
                 relationship_type_caps=baseline.get("relationshipTypeCaps") or None,
                 warnings=["LLM provider not configured; returning deterministic baseline inference"],
+                foreign_key_status=baseline_fk_status,
+                taxonomy_status=baseline_taxonomy_status,
                 assumptions=[],
                 review_required=True,
                 provider=str(self.llm_provider) if self.llm_provider else None,
@@ -512,6 +540,7 @@ class AgenticSchemaAnalyzer:
         _snapshot: dict[str, Any] | None = None,
     ) -> AnalysisResult:
         prov = _ProvenanceStamp(run_id=str(uuid.uuid4()), started_at=now_iso())
+        self._db = db
         prep = self._prepare_analysis(
             db,
             prov=prov,
@@ -669,6 +698,7 @@ class AgenticSchemaAnalyzer:
     ) -> AnalysisResult:
         """Async version of analyze_physical_schema. Requires provider with agenerate()."""
         prov = _ProvenanceStamp(run_id=str(uuid.uuid4()), started_at=now_iso())
+        self._db = db
         prep = self._prepare_analysis(
             db,
             prov=prov,
@@ -744,6 +774,59 @@ class AgenticSchemaAnalyzer:
             entity_strategy=prep.entity_strategy,
         )
 
+    def _detect_attribute_relationships(self, data: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any] | None:
+        """Relationships carried by a scalar attribute rather than an edge collection.
+
+        Off unless asked for: candidate generation is snapshot-only and cheap, but value
+        containment probing is the first cross-collection database cost in this analyzer
+        (PRD §6.2), so ``detect_foreign_keys`` gates both and the probe is separately gated
+        by having a database handle.
+        """
+        if not self.detect_foreign_keys:
+            return None
+        from .fk_inference import InferenceOptions, apply_to_analysis
+        from .fk_sampler import ArangoValueSampler
+
+        sampler = None
+        options = InferenceOptions()
+        if self._db is not None and self.sample_fk_overlap:
+            sampler = ArangoValueSampler(self._db)
+            options = InferenceOptions(sample_overlap=True)
+
+        try:
+            status = apply_to_analysis(data, snapshot, sampler=sampler, options=options)
+        except Exception as err:  # noqa: BLE001 - enrichment must never fail an analysis
+            logger.warning("foreign-key detection failed: %s", err)
+            return {"status": "degraded", "reason": str(err)}
+
+        if sampler is not None:
+            probe = sampler.status()
+            if probe.get("status") == "degraded":
+                status.update(probe)
+        return status
+
+    def _discover_taxonomy(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """Class abstractions, via the shared ``conceptual-taxonomy`` library (PRD §6.3)."""
+        if not self.discover_taxonomy:
+            return None
+        from .taxonomy import TAXONOMY_AVAILABLE, discover, merge_into_analysis
+
+        if not TAXONOMY_AVAILABLE:
+            return {"status": "unavailable", "reason": "conceptual-taxonomy is not installed"}
+        try:
+            proposals = discover(
+                data,
+                db=self._db,
+                measure_containment=self.measure_key_containment and self._db is not None,
+            )
+            merge_into_analysis(data, proposals)
+        except Exception as err:  # noqa: BLE001 - enrichment must never fail an analysis
+            logger.warning("abstraction discovery failed: %s", err)
+            return {"status": "degraded", "reason": str(err)}
+
+        classes = (proposals or {}).get("abstractClasses") or []
+        return {"status": "ok", "abstractClasses": len(classes)}
+
     def _build_result(
         self,
         *,
@@ -783,6 +866,12 @@ class AgenticSchemaAnalyzer:
             )
         confidence = max(0.0, min(1.0, confidence))
         review_required = confidence < self.review_threshold or bool(errors)
+
+        # Relational-pattern and taxonomy enrichment run here because this is where the
+        # baseline and LLM paths converge: both produce `data`, and both should gain the
+        # same relationships and class hierarchy. Running earlier would mean doing it twice.
+        fk_status = self._detect_attribute_relationships(data, snapshot)
+        taxonomy_status = self._discover_taxonomy(data)
 
         annotate_provenance(data, used_baseline=bool(errors))
         stamp_temporal_provenance(data, now=now_iso())
@@ -836,6 +925,8 @@ class AgenticSchemaAnalyzer:
             multitenancy_status=data.get("metadata", {}).get("multitenancyStatus")
             if isinstance(data.get("metadata"), dict)
             else None,
+            foreign_key_status=fk_status,
+            taxonomy_status=taxonomy_status,
             vci=data.get("metadata", {}).get("vci") if isinstance(data.get("metadata"), dict) else None,
             rdf_topology=data.get("metadata", {}).get("rdfTopology")
             if isinstance(data.get("metadata"), dict)

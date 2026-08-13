@@ -28,9 +28,7 @@ RAW = {
                 "properties": {"account_id": {"field": "account_id", "indexed": True}},
             }
         },
-        "relationships": {
-            "HAS_CHUNK": {"style": "DEDICATED_COLLECTION", "edgeCollectionName": "has_chunk"}
-        },
+        "relationships": {"HAS_CHUNK": {"style": "DEDICATED_COLLECTION", "edgeCollectionName": "has_chunk"}},
     },
     "provenance": {"producer": "t", "direction": "reverse", "source": {"kind": "arango", "ref": "x"}},
 }
