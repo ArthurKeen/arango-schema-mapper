@@ -4,6 +4,8 @@ import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from arango.exceptions import ArangoServerError
+
 if TYPE_CHECKING:
     from arango.database import StandardDatabase
 
@@ -72,7 +74,11 @@ def _detect_type_fields_via_collect(
             bind_vars={"@c": collection_name},
         )
         samples = list(cursor)
-    except Exception:
+    except ArangoServerError as exc:
+        logger.warning("could not sample %s for discriminator detection: %s", collection_name, exc)
+        return [], {}, {}, {}
+    except Exception as exc:
+        logger.warning("unexpected error sampling %s for discriminator detection: %s", collection_name, exc)
         return [], {}, {}, {}
 
     if not samples:
@@ -86,6 +92,7 @@ def _detect_type_fields_via_collect(
     value_counts: dict[str, list[dict[str, Any]]] = {}
     distinct_counts: dict[str, int] = {}
     overflow: dict[str, list[dict[str, Any]]] = {}
+    failures = 0
     for key in candidates:
         try:
             if floor and floor > 0:
@@ -155,9 +162,41 @@ def _detect_type_fields_via_collect(
                 extra = row.get("overflow")
                 if isinstance(extra, list) and extra:
                     overflow[key] = extra
-        except Exception:
+        except ArangoServerError as exc:
+            # A swallowed query error previously made an AQL reserved-word bug
+            # (ERR 1501) indistinguishable from "this field has no values",
+            # disabling LPG discriminator detection for a whole release. Catch the
+            # server error we actually expect and log it at WARNING so degradation
+            # is visible instead of silent.
+            failures += 1
+            logger.warning(
+                "discriminator value query failed for %s.%s — detection degraded, "
+                "treating field as having no values: %s",
+                collection_name,
+                key,
+                exc,
+            )
+            continue
+        except Exception as exc:
+            # Resilience fallback (non-server / fake-DB / unexpected errors): never
+            # let one field abort the whole snapshot — but log it, so it is not
+            # silent either. This is the tier that keeps graceful degradation.
+            failures += 1
+            logger.warning(
+                "unexpected error sampling discriminator %s.%s — treating field as having no values: %s",
+                collection_name,
+                key,
+                exc,
+            )
             continue
 
+    if failures:
+        logger.warning(
+            "%d of %d candidate discriminator field(s) failed to sample in %s; type detection may be incomplete",
+            failures,
+            len(candidates),
+            collection_name,
+        )
     return candidates, value_counts, distinct_counts, overflow
 
 
