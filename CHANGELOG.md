@@ -4,6 +4,49 @@
 
 (no changes)
 
+## 0.12.0 — 2026-08-18
+
+### Fixed
+- **LPG discriminator detection was inert on ArangoDB 3.12** (fixes downstream REQ-116).
+  `snapshot._detect_type_fields_via_collect` built its `COLLECT` query with an **unquoted
+  `distinct` projection key** — an AQL reserved word — so ArangoDB 3.12 rejected the query with
+  `[ERR 1501] syntax error`. The failure was swallowed by a broad `except`, leaving
+  `sample_field_value_counts` empty, so every discriminated collection fell through to
+  `PG_ENTITY_COLLECTION` instead of `LPG_LABEL` — the library reported success while producing
+  naive one-class-per-collection output. The key is now quoted. Committed in `d485d03` but never
+  released: PyPI `0.11.0` predated the fix while repo `0.11.0` contained it; this release ends
+  that version collision.
+
+### Changed
+- **The swallow that hid the bug is no longer silent.** `_detect_type_fields_via_collect` now
+  catches `ArangoServerError` specifically and logs each swallowed query failure — plus a
+  per-collection summary — at `WARNING`; a broad fallback still degrades gracefully but is
+  logged. A one-character AQL error can no longer masquerade as "this field has no values."
+
+### Added
+- **`FOREIGN_KEY` and `JOIN_TABLE` relationship mapping styles** (PRD §3.3) — SQL-style attribute
+  references and reified junction collections.
+- **Foreign-key inference engine** (`fk_inference.py`) + `ArangoValueSampler` (`fk_sampler.py`),
+  ported from `relational-schema-analyzer`; opt-in value-containment sampling under a bounded
+  probe budget with `metadata.foreignKeyStatus` (PRD §6.2). FK detection and taxonomy discovery
+  are now wired into the analyzer.
+- **Conceptual-taxonomy (class-abstraction) discovery** (`taxonomy.py`, PRD §6.3), delegated to
+  the optional `conceptual-taxonomy` library.
+- **LPG full-label-set mode** (`min_type_value_count`) — retain the complete discriminator
+  vocabulary rather than only the top-K (PRD §3.4).
+- **CSI CC-12 OWL naming** applied by default in `to_csi` and enforced by `validate_csi`.
+- **`analysisOptions.entityStrategy`** (`auto` | `collection`) exposed in the v1 tool contract
+  (PRD §3.8), backing the existing Python `entity_strategy` override.
+- **Real-ArangoDB regression test** for LPG discriminator detection
+  (`tests/integration/test_lpg_discriminator_regression.py`) — asserts `sample_field_value_counts`
+  is non-empty and `detectedPatterns` contains `LPG_LABEL`; verified to fail when the reserved-word
+  quoting is reverted (a fixture DB never parses the AQL, so it cannot catch this class of bug).
+
+### Infrastructure / docs
+- Repository renamed `arango-schema-mapper` → `arango-schema-analyzer`; publish workflow guarded
+  to the canonical repo; local `scripts/publish.sh` token-based publish path added.
+- PRD documentation for the above (§3.3/§3.4/§6.2/§6.3/§3.8); denormalization-detection proposal.
+
 ## 0.11.0 — 2026-07-17
 
 ### PRD drift closure (5 gaps from 2026-07-16 prd-sync)
