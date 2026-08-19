@@ -70,11 +70,9 @@ if [ "$TARGET" = "testpypi" ]; then
     echo "!! Note: a production PyPI token will NOT authenticate against TestPyPI." >&2
     TOKEN="$(env_get PYPI_TOKEN)"
   fi
-  REPO_ARGS=(--repository-url "https://test.pypi.org/legacy/")
   DEST="TestPyPI"
 else
   TOKEN="$(env_get PYPI_TOKEN)"
-  REPO_ARGS=()
   DEST="PyPI"
 fi
 
@@ -84,6 +82,13 @@ if [ -z "$TOKEN" ]; then
 fi
 
 echo ">> Uploading dist/* to $DEST (token from $ENV_FILE, user __token__)"
-TWINE_USERNAME="__token__" TWINE_PASSWORD="$TOKEN" \
-  python -m twine upload "${REPO_ARGS[@]}" "$REPO_ROOT"/dist/*
+# Branch rather than expand a possibly-empty array — "${arr[@]}" on an empty
+# array trips `set -u` ("unbound variable") on macOS's bash 3.2.
+if [ "$TARGET" = "testpypi" ]; then
+  TWINE_USERNAME="__token__" TWINE_PASSWORD="$TOKEN" \
+    python -m twine upload --repository-url "https://test.pypi.org/legacy/" "$REPO_ROOT"/dist/*
+else
+  TWINE_USERNAME="__token__" TWINE_PASSWORD="$TOKEN" \
+    python -m twine upload "$REPO_ROOT"/dist/*
+fi
 echo ">> Done."
