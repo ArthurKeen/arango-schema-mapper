@@ -225,6 +225,21 @@ def _split_prefix(field_name: str) -> list[tuple[str, str, InferenceMethod, floa
     return out
 
 
+def _candidate_key_targets(shape: CollectionShape) -> list[tuple[str, float]]:
+    """Single-column candidate-key target fields for a FK, each with a rank penalty.
+
+    The collection key (``_key``, penalty ``0.0``) plus every single-column unique-indexed
+    field (penalty ``0.05`` — a natural key ranks just below the collection key). Mirrors
+    RSA's "PK **or** UNIQUE" target set: uniqueness is what makes a field a valid target (it
+    fixes the many-to-one direction), and composite unique constraints are excluded because
+    ``unique_fields`` holds only single-column ones.
+    """
+    key_field = shape.key_fields[0]
+    targets: list[tuple[str, float]] = [(key_field, 0.0)]
+    targets += [(uf, 0.05) for uf in sorted(shape.unique_fields) if _normalize(uf) != _normalize(key_field)]
+    return targets
+
+
 def _candidates_for_field(
     collections: dict[str, CollectionShape],
     name: str,
@@ -263,22 +278,35 @@ def _candidates_for_field(
             foreign_shape = collections[foreign]
             if len(foreign_shape.key_fields) != 1:
                 continue
-            foreign_field = foreign_shape.key_fields[0]
-            if required_suffix and _normalize(required_suffix) != _normalize(foreign_field):
-                continue
-            candidate = _make_candidate(
-                collections,
-                name,
-                [field_name],
-                foreign,
-                [foreign_field],
-                method=method,
-                base_confidence=base,
-                evidence=[f"name pattern '{field_name}' → {foreign}.{foreign_field}"],
-                edges=edges,
-            )
-            if candidate is not None:
-                candidates.append(candidate)
+            key_field = foreign_shape.key_fields[0]
+            # RSA convergence (surrogate/natural-key gap): a reference can target any
+            # single-column *candidate* key — the collection key OR a unique-indexed
+            # field (a natural key landed from a relational source), not only `_key`.
+            # Unique-field targets rank one notch below the key (−0.05), and uniqueness
+            # supplies direction (a non-unique field is never a target). Composite
+            # unique constraints stay out of this single-column path.
+            for foreign_field, penalty in _candidate_key_targets(foreign_shape):
+                if required_suffix:
+                    if _normalize(required_suffix) != _normalize(foreign_field):
+                        continue
+                elif foreign_field != key_field:
+                    # id/key/camel prefixes name the *collection*, not a field, so they
+                    # target the collection key only — never a unique field (avoids noise
+                    # like `document_id` also proposing `documents.code`).
+                    continue
+                candidate = _make_candidate(
+                    collections,
+                    name,
+                    [field_name],
+                    foreign,
+                    [foreign_field],
+                    method=method,
+                    base_confidence=base - penalty,
+                    evidence=[f"name pattern '{field_name}' → {foreign}.{foreign_field}"],
+                    edges=edges,
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
 
     if lowered not in opts.generic_key_names:
         for foreign, foreign_shape in collections.items():

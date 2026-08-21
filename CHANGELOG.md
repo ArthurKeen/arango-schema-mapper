@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+- **FK inference can target any single-column candidate key, not only `_key`.** A reference
+  whose name resolves a foreign collection *and* names one of its single-column unique-indexed
+  fields (e.g. `chunks.document_code → documents.code`, where `code` is unique but not the
+  document key) is now proposed — the natural-key case common when data is landed from a
+  relational source. Unique-field targets rank one notch below the collection key (−0.05);
+  id/key/camel references still target the key only; uniqueness supplies the many-to-one
+  direction (a non-unique field is never a target); composite unique constraints stay out of
+  the single-column path; the type check is unchanged. Mirrors the equivalent
+  `relational-schema-analyzer` fix, keeping the two engines converged.
+
 ### Fixed
 - **`detectForeignKeys` / `sampleForeignKeyOverlap` were unreachable through the v1 tool
   contract.** `tool.py` read both `analysisOptions` keys, but they were not declared in

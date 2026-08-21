@@ -357,3 +357,58 @@ def test_renders_a_foreign_key_mapping():
 def test_enforced_is_always_false():
     """ArangoDB enforces no referential constraint — every result is evidence, not proof."""
     assert all(r.to_mapping()["enforced"] is False for r in infer_foreign_keys(chinook()))
+
+
+# ── RSA convergence: candidate-key (unique, not just _key) FK targets ─────────
+
+
+def _natural_key_shapes() -> dict[str, CollectionShape]:
+    """`documents` keyed by a hash `_key` but with a natural unique `code`; `chunks`
+    references it two ways: `document_id` (→ the key) and `document_code` (→ the natural key)."""
+    return {
+        "documents": CollectionShape(
+            name="documents",
+            fields={"_key": "string", "code": "string", "filename": "string"},
+            unique_fields={"code"},
+            count=50,
+        ),
+        "chunks": CollectionShape(
+            name="chunks",
+            fields={"_key": "string", "document_id": "string", "document_code": "string", "text": "string"},
+            count=500,
+        ),
+    }
+
+
+def test_reference_can_target_a_unique_field_not_just_key():
+    results = infer_foreign_keys(_natural_key_shapes())
+    assert ("chunks", "document_code", "documents") in _pairs(results)
+    match = next(r for r in results if r.fields == ["document_code"])
+    assert match.foreign_fields == ["code"]  # the natural key, not `_key`
+    assert match.method == "name_suffix"
+
+
+def test_id_suffix_still_targets_the_key_only_not_a_unique_field():
+    # `document_id` names the collection → the collection key; it must NOT also
+    # propose `documents.code` (that would be noise).
+    results = [r for r in infer_foreign_keys(_natural_key_shapes()) if r.fields == ["document_id"]]
+    assert all(r.foreign_fields == ["_key"] for r in results)
+    assert not any(r.foreign_fields == ["code"] for r in results)
+
+
+def test_unique_target_ranks_below_the_key_target():
+    # Same reference name that could resolve to either: `documents_code` where `documents`
+    # also happens to have `_key`. The unique-field resolution carries the −0.05 penalty,
+    # so a key-target reference of the same base outranks it.
+    shapes = _natural_key_shapes()
+    by_key = next(r for r in infer_foreign_keys(shapes) if r.fields == ["document_id"])
+    by_unique = next(r for r in infer_foreign_keys(shapes) if r.fields == ["document_code"])
+    assert by_unique.confidence < by_key.confidence
+
+
+def test_non_unique_field_is_never_a_target():
+    # If `code` is NOT unique, `document_code` must not be proposed — uniqueness is what
+    # supplies the many-to-one direction (the report's low-cardinality-containment guard).
+    shapes = _natural_key_shapes()
+    shapes["documents"].unique_fields = set()
+    assert not any(r.fields == ["document_code"] for r in infer_foreign_keys(shapes))
