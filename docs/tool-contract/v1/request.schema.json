@@ -95,6 +95,16 @@
         "sampleLimitPerCollection": { "type": "integer", "minimum": 0, "maximum": 1000, "default": 0 },
         "includeSamplesInSnapshot": { "type": "boolean", "default": false },
         "entityStrategy": { "type": "string", "enum": ["auto", "collection"], "default": "auto" },
+        "detectForeignKeys": {
+          "type": "boolean",
+          "default": false,
+          "description": "Infer relationships carried by scalar reference attributes (document-modelled foreign keys), not just edge collections. Name-anchored candidates ({singular}_id/{singular}Id/camelCase where a matching collection exists, plus 'Collection/key'-shaped values), each emitted as an inferred relationship (style FOREIGN_KEY, enforced=false, with a confidence and evidence). Deterministic and read-only; snapshot-only unless sampleForeignKeyOverlap is set."
+        },
+        "sampleForeignKeyOverlap": {
+          "type": "boolean",
+          "default": false,
+          "description": "When detectForeignKeys is set, additionally confirm each candidate by sampling values against the target collection's keys (bounded probe budget). Off by default because it issues extra AQL; raises confidence and vetoes coincidental name matches."
+        },
         "graphScope": {
           "type": "string",
           "minLength": 1,

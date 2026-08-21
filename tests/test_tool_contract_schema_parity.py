@@ -52,3 +52,21 @@ def test_runtime_loader_matches_docs_copy() -> None:
 
     assert schemas.request_schema == docs_request
     assert schemas.response_schema == docs_response
+
+
+def test_foreign_key_options_are_declared_and_valid() -> None:
+    """detectForeignKeys / sampleForeignKeyOverlap must be declared in the contract.
+
+    tool.py reads them, and analysisOptions is additionalProperties:false, so if the
+    schema omits them a request that sets them is rejected at validation and the FK
+    feature is unreachable through the contract. Guard against that regressing.
+    """
+    from schema_analyzer.tool_contract_v1 import validate_request_v1
+
+    req = {
+        "contractVersion": "1",
+        "operation": "analyze",
+        "connection": {"url": "http://localhost:8529", "database": "d", "username": "root", "password": "x"},
+        "analysisOptions": {"detectForeignKeys": True, "sampleForeignKeyOverlap": True},
+    }
+    assert validate_request_v1(req) == [], "FK options must validate against the v1 request schema"

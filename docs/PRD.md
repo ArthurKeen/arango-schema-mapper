@@ -201,7 +201,17 @@ skipping discriminator inference. `tool.py` validates the value and returns
 `{ "ok": false, "error": { "code": "INVALID_REQUEST" } }` for any other value before
 analysis runs.
 
-**Implementation**: `tool.py` (entrypoint + `analysisOptions.entityStrategy` validation/threading), `tool_contract_v1.py` (schema loading and validation), `tool_contract/v1/request.schema.json` (`entityStrategy` enum).
+`analysisOptions.detectForeignKeys` (boolean, default `false`) turns on inference of
+relationships carried by scalar reference attributes (document-modelled foreign keys),
+so a database of document collections with no edge collections still yields
+relationships (§6.2). `analysisOptions.sampleForeignKeyOverlap` (boolean, default
+`false`) additionally confirms each candidate by sampling values against the target
+collection's keys. Both must be **declared in `request.schema.json`** as well as read by
+`tool.py`: `analysisOptions` is `additionalProperties: false`, so an option the schema
+does not declare is rejected at validation and is unreachable through the contract even
+if the code reads it (see §4.7).
+
+**Implementation**: `tool.py` (entrypoint + `analysisOptions.entityStrategy` / `detectForeignKeys` / `sampleForeignKeyOverlap` validation/threading), `tool_contract_v1.py` (schema loading and validation), `tool_contract/v1/request.schema.json` (`entityStrategy` enum, `detectForeignKeys` / `sampleForeignKeyOverlap` booleans).
 
 #### **3.9. CLI**
 
@@ -424,7 +434,7 @@ Tunable defaults are centralized in `defaults.py`:
 
 #### **4.7. Tool contract fidelity**
 
-Fields in `docs/tool-contract/v1/request.schema.json` **must either be implemented** in `tool.py` / `AgenticSchemaAnalyzer` **or be explicitly marked deferred** in this PRD and in schema descriptions. Implemented: **`connection.verifyTls`** (maps to python-arango `verify_override`), **`analysisOptions.maxRepairAttempts`**, **`llm.systemPrompt`**, **`llm.promptVersion`** (participates in LLM cache key with the effective system prompt), **`domainContext`** (caller-supplied domain priors → `AgenticSchemaAnalyzer.domain_context`), **`analysisOptions.entityStrategy`** (`auto` | `collection`, validated in `tool.py` → `analyze_physical_schema(entity_strategy=…)`; see §3.4/§3.8), and redaction modes (`analysisOptions.redaction`). Drift between schema and code undermines agent workflows that rely on the contract.
+Fields in `docs/tool-contract/v1/request.schema.json` **must either be implemented** in `tool.py` / `AgenticSchemaAnalyzer` **or be explicitly marked deferred** in this PRD and in schema descriptions. Implemented: **`connection.verifyTls`** (maps to python-arango `verify_override`), **`analysisOptions.maxRepairAttempts`**, **`llm.systemPrompt`**, **`llm.promptVersion`** (participates in LLM cache key with the effective system prompt), **`domainContext`** (caller-supplied domain priors → `AgenticSchemaAnalyzer.domain_context`), **`analysisOptions.entityStrategy`** (`auto` | `collection`, validated in `tool.py` → `analyze_physical_schema(entity_strategy=…)`; see §3.4/§3.8), **`analysisOptions.detectForeignKeys`** / **`analysisOptions.sampleForeignKeyOverlap`** (booleans → `AgenticSchemaAnalyzer.detect_foreign_keys` / `sample_fk_overlap`; see §3.8/§6.2), and redaction modes (`analysisOptions.redaction`). Drift between schema and code undermines agent workflows that rely on the contract — e.g. these two FK options were read by `tool.py` but absent from the schema, so with `additionalProperties: false` a request setting them was rejected at validation and the feature was unreachable through the contract until the schema declared them.
 
 ---
 

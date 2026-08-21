@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-(no changes)
+### Fixed
+- **`detectForeignKeys` / `sampleForeignKeyOverlap` were unreachable through the v1 tool
+  contract.** `tool.py` read both `analysisOptions` keys, but they were not declared in
+  `request.schema.json`, and `analysisOptions` is `additionalProperties: false` — so a request
+  that set them was rejected at validation, leaving document-modelled foreign-key inference
+  (§6.2) reachable only via the Python API. Declared both options in the request schema (both
+  copies), documented them in PRD §3.8/§4.7, and added a parity guard test. The Python default
+  (`detect_foreign_keys=False`) is unchanged.
 
 ## 0.12.0 — 2026-08-18
 
