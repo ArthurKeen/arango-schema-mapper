@@ -531,7 +531,13 @@ unless `naming=False`, and `to_csi` accepts override maps for irregular singular
   these: name-convention candidate generation (snake_case / camelCase / `_id`-shaped
   values that name their target collection), type-compatibility gating, composite-key
   folding, dedup, and a per-candidate confidence with an `evidence[]` list, governed
-  by `InferenceOptions` (defaults in `defaults.py`). Value-containment sampling is
+  by `InferenceOptions` (defaults in `defaults.py`). A reference may target any
+  **single-column candidate key** of the foreign collection — its `_key` **or** a
+  single-column unique-indexed field (a natural key landed from a relational source),
+  the latter ranked one notch lower; uniqueness supplies the many-to-one direction, so
+  a non-unique field is never a target, and composite unique constraints stay out of the
+  single-column path. (Converged with `relational-schema-analyzer`, which targets PK or
+  UNIQUE the same way.) Value-containment sampling is
   **off by default**; when enabled it delegates to `ArangoValueSampler`
   (`schema_analyzer/fk_sampler.py`) — one bounded AQL containment probe per candidate
   under a hard `FK_MAX_PROBES` budget, surfacing `metadata.foreignKeyStatus =
