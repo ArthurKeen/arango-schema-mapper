@@ -26,6 +26,23 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
 
+# Resolve a Python that has the build/publish deps. Bare `python` is often absent
+# (no `python` shim, or the venv isn't on PATH in this shell), so prefer an active
+# venv, then the repo's .venv, then python3. Override with PYTHON=... if needed.
+PY="${PYTHON:-}"
+if [ -z "$PY" ]; then
+  if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PY="$VIRTUAL_ENV/bin/python"
+  elif [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    PY="$REPO_ROOT/.venv/bin/python"
+  elif command -v python3 >/dev/null 2>&1; then
+    PY="python3"
+  else
+    PY="python"
+  fi
+fi
+echo ">> using python: $PY"
+
 TARGET="pypi"
 UPLOAD=1
 for arg in "$@"; do
@@ -53,10 +70,10 @@ env_get() {
 
 echo ">> Building sdist + wheel"
 rm -rf "$REPO_ROOT/dist"
-python -m build "$REPO_ROOT"
+"$PY" -m build "$REPO_ROOT"
 
 echo ">> twine check --strict"
-python -m twine check --strict "$REPO_ROOT"/dist/*
+"$PY" -m twine check --strict "$REPO_ROOT"/dist/*
 
 if [ "$UPLOAD" -eq 0 ]; then
   echo ">> --check: artifact valid; skipping upload."
@@ -86,9 +103,9 @@ echo ">> Uploading dist/* to $DEST (token from $ENV_FILE, user __token__)"
 # array trips `set -u` ("unbound variable") on macOS's bash 3.2.
 if [ "$TARGET" = "testpypi" ]; then
   TWINE_USERNAME="__token__" TWINE_PASSWORD="$TOKEN" \
-    python -m twine upload --repository-url "https://test.pypi.org/legacy/" "$REPO_ROOT"/dist/*
+    "$PY" -m twine upload --repository-url "https://test.pypi.org/legacy/" "$REPO_ROOT"/dist/*
 else
   TWINE_USERNAME="__token__" TWINE_PASSWORD="$TOKEN" \
-    python -m twine upload "$REPO_ROOT"/dist/*
+    "$PY" -m twine upload "$REPO_ROOT"/dist/*
 fi
 echo ">> Done."
