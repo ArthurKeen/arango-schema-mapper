@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+(no changes)
+
+## 0.12.1 — 2026-08-21
+
 ### Added
 - **FK inference can target any single-column candidate key, not only `_key`.** A reference
   whose name resolves a foreign collection *and* names one of its single-column unique-indexed
