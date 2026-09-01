@@ -5,7 +5,7 @@
 **Package**: `arangodb-schema-analyzer` (PyPI)
 **Import**: `schema_analyzer`
 **Language**: Python ≥ 3.10
-**Version**: tracked in `pyproject.toml` (current: 0.10.0; see `CHANGELOG.md`)
+**Version**: tracked in `pyproject.toml` — see `CHANGELOG.md` for the current release
 
 **Companion codebase:** **Arango-OntoExtract (AOE)** is developed in the **`ontology_generator`** repository (underscore, not `ontology-generator`). A typical local layout is `~/code/ontology_generator` alongside this repo. Cross-references in this document mean that project.
 
